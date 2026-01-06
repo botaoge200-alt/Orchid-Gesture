@@ -14,7 +14,7 @@ function App() {
   const [patternId, setPatternId] = useState('stripes') // 当前选中的模块ID
 
   // 模拟模块库数据 (现在改为状态，以便添加新模块)
-  const [patterns, setPatterns] = useState([
+  const [patterns, setPatterns] = useState<Array<{ id: string; name: string; type: string; img: string | null }>>([
     { id: 'none', name: '纯色基础款', type: 'solid', img: null },
     { id: 'stripes', name: '经典双色夹条', type: 'svg', img: null },
     { id: 'plaid', name: '苏格兰格纹', type: 'svg', img: null },
@@ -26,34 +26,51 @@ function App() {
     const file = e.target.files?.[0]
     if (!file) return
 
+    console.log('File selected:', file.name, file.type)
+
     const reader = new FileReader()
     reader.onload = (event) => {
       const imgUrl = event.target?.result as string
+      console.log('File read success, data URL length:', imgUrl.length)
+      
       const newPattern = {
         id: `custom-${Date.now()}`,
-        name: '自定义花型', // 实际项目中可以是文件名
+        name: '自定义花型', 
         type: 'image',
         img: imgUrl
       }
-      setPatterns(prev => [...prev, newPattern])
-      setPatternId(newPattern.id) // 自动选中新上传的
+      setPatterns(prev => {
+        const next = [...prev, newPattern]
+        console.log('Updated patterns:', next)
+        return next
+      })
+      setPatternId(newPattern.id) 
+      console.log('Set patternId to:', newPattern.id)
     }
     reader.readAsDataURL(file)
   }
 
   // 动态生成纹理的逻辑
   const texture = useMemo(() => {
+    console.log('Recalculating texture for patternId:', patternId)
     if (patternId === 'none') return null
 
     const currentPattern = patterns.find(p => p.id === patternId)
+    console.log('Current pattern:', currentPattern)
     
     // 如果是图片类型的模块 (UGC)
     if (currentPattern?.type === 'image' && currentPattern.img) {
+      console.log('Loading image texture...')
       const loader = new THREE.TextureLoader()
-      const tex = loader.load(currentPattern.img)
+      const tex = loader.load(currentPattern.img, (t) => {
+        console.log('Texture loaded successfully:', t)
+        t.needsUpdate = true
+      }, undefined, (err) => {
+        console.error('Texture load failed:', err)
+      })
       tex.wrapS = THREE.RepeatWrapping
       tex.wrapT = THREE.RepeatWrapping
-      tex.colorSpace = THREE.SRGBColorSpace // 修正颜色空间
+      tex.colorSpace = THREE.SRGBColorSpace 
       return tex
     }
 
@@ -110,7 +127,7 @@ function App() {
     tex.wrapT = THREE.RepeatWrapping
     tex.needsUpdate = true
     return tex
-  }, [color, stripeColor, patternId])
+  }, [color, stripeColor, patternId, patterns])
 
   return (
     <div className="app-container">
@@ -142,6 +159,8 @@ function App() {
             width={width}
             texture={texture}
             showTexture={patternId !== 'none'}
+            isDecal={patterns.find(p => p.id === patternId)?.type === 'image'}
+            enablePlacement={patternId !== 'none'}
           />
           <ContactShadows 
             position={[0, -3, 0]} 
