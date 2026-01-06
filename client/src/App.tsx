@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useRef } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls, Environment, ContactShadows } from '@react-three/drei'
 import * as THREE from 'three'
@@ -56,6 +56,11 @@ function App() {
   const [category, setCategory] = useState('patterns') // 一级菜单：模块库
   const [clothingType, setClothingType] = useState('dress') // 二级菜单：衣服类型
   const [materialType, setMaterialType] = useState('cotton') // 三级菜单：面料选择
+  const [selectedTool, setSelectedTool] = useState<'brush'|'circle'|'square'|'line'|'wand'|'freeform'>('brush')
+  const toolCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const [toolDrawing, setToolDrawing] = useState(false)
+  const [toolLineStart, setToolLineStart] = useState<{x:number,y:number} | null>(null)
+  const [toolSize, setToolSize] = useState(40)
 
   // 一级分类列表状态
   const [categories, setCategories] = useState([
@@ -75,31 +80,176 @@ function App() {
   }
 
   // 模拟模块库数据 (现在改为状态，以便添加新模块)
-  const [patterns, setPatterns] = useState([
+  type Pattern = { id: string, name: string, type: 'solid'|'svg'|'image', img: string|null }
+  const defaultPatterns: Pattern[] = [
     { id: 'none', name: '纯色基础款', type: 'solid', img: null },
     { id: 'stripes', name: '经典双色夹条', type: 'svg', img: null },
     { id: 'plaid', name: '苏格兰格纹', type: 'svg', img: null },
     { id: 'dots', name: '波点印花', type: 'svg', img: null },
-  ])
+  ]
+  const [patternsByPart, setPatternsByPart] = useState<Record<string, Pattern[]>>({
+    dress: defaultPatterns,
+    top: defaultPatterns,
+    skirt: defaultPatterns
+  })
+  React.useEffect(() => {
+    try {
+      const saved = localStorage.getItem('patternsByPart')
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        setPatternsByPart(prev => ({ ...prev, ...parsed }))
+      }
+    } catch {}
+  }, [])
+  React.useEffect(() => {
+    try {
+      localStorage.setItem('patternsByPart', JSON.stringify(patternsByPart))
+    } catch {}
+  }, [patternsByPart])
+  const patterns = useMemo(() => patternsByPart[clothingType] || defaultPatterns, [patternsByPart, clothingType])
 
-  // 处理文件上传
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-
-    const reader = new FileReader()
-    reader.onload = (event) => {
-      const imgUrl = event.target?.result as string
-      const newPattern = {
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const res = await fetch('http://localhost:8000/generate-texture', {
+        method: 'POST',
+        body: formData
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      const newPattern: Pattern = {
         id: `custom-${Date.now()}`,
-        name: file.name, // 使用原始文件名
+        name: file.name,
         type: 'image',
-        img: imgUrl
+        img: data.texture_url as string
       }
-      setPatterns(prev => [...prev, newPattern])
-      setPatternId(newPattern.id) // 自动选中新上传的
+      setPatternsByPart(prev => {
+        const list = prev[clothingType] || defaultPatterns
+        return { ...prev, [clothingType]: [...list, newPattern] }
+      })
+      setPatternId(newPattern.id)
+    } catch {
+      const reader = new FileReader()
+      reader.onload = (event) => {
+        const imgUrl = event.target?.result as string
+        const newPattern: Pattern = {
+          id: `custom-${Date.now()}`,
+          name: file.name,
+          type: 'image',
+          img: imgUrl
+        }
+        setPatternsByPart(prev => {
+          const list = prev[clothingType] || defaultPatterns
+          return { ...prev, [clothingType]: [...list, newPattern] }
+        })
+        setPatternId(newPattern.id)
+      }
+      reader.readAsDataURL(file)
     }
-    reader.readAsDataURL(file)
+  }
+
+  const handleApplyToolTexture = () => {
+    const canvas = toolCanvasRef.current
+    if (!canvas) return
+    const imgUrl = canvas.toDataURL('image/png')
+    const newPattern: Pattern = {
+      id: `tool-${Date.now()}`,
+      name: `工具纹理`,
+      type: 'image',
+      img: imgUrl
+    }
+    setPatternsByPart(prev => {
+      const list = prev[clothingType] || defaultPatterns
+      return { ...prev, [clothingType]: [...list, newPattern] }
+    })
+    setPatternId(newPattern.id)
+  }
+
+  const getCanvasPos = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const rect = (e.target as HTMLCanvasElement).getBoundingClientRect()
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top }
+  }
+  const getCtx = () => {
+    const canvas = toolCanvasRef.current
+    if (!canvas) return null
+    const ctx = canvas.getContext('2d')
+    return ctx
+  }
+  const toolColor = selectedBrushColor || stripeColor
+  const onToolMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const pos = getCanvasPos(e)
+    const ctx = getCtx()
+    if (!ctx) return
+    if (selectedTool === 'brush' || selectedTool === 'freeform') {
+      setToolDrawing(true)
+      ctx.strokeStyle = toolColor
+      ctx.lineWidth = 6
+      ctx.lineCap = 'round'
+      ctx.beginPath()
+      ctx.moveTo(pos.x, pos.y)
+    } else if (selectedTool === 'circle') {
+      ctx.fillStyle = toolColor
+      ctx.beginPath()
+      ctx.arc(pos.x, pos.y, toolSize, 0, Math.PI * 2)
+      ctx.fill()
+    } else if (selectedTool === 'square') {
+      ctx.fillStyle = toolColor
+      ctx.fillRect(pos.x - toolSize, pos.y - toolSize, toolSize * 2, toolSize * 2)
+    } else if (selectedTool === 'line') {
+      if (!toolLineStart) {
+        setToolLineStart(pos)
+      } else {
+        ctx.strokeStyle = toolColor
+        ctx.lineWidth = 6
+        ctx.beginPath()
+        ctx.moveTo(toolLineStart.x, toolLineStart.y)
+        ctx.lineTo(pos.x, pos.y)
+        ctx.stroke()
+        setToolLineStart(null)
+      }
+    } else if (selectedTool === 'wand') {
+      const canvas = toolCanvasRef.current
+      if (!canvas) return
+      const ctx2 = canvas.getContext('2d')
+      if (!ctx2) return
+      const img = ctx2.getImageData(0, 0, canvas.width, canvas.height)
+      const target = ((pos.y | 0) * canvas.width + (pos.x | 0)) * 4
+      const r0 = img.data[target], g0 = img.data[target+1], b0 = img.data[target+2]
+      const stack: number[] = [pos.x | 0, pos.y | 0]
+      const visited = new Set<string>()
+      const tol = 32
+      while (stack.length) {
+        const y = stack.pop() as number
+        const x = stack.pop() as number
+        const key = x + ',' + y
+        if (visited.has(key)) continue
+        visited.add(key)
+        if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) continue
+        const idx = (y * canvas.width + x) * 4
+        const r = img.data[idx], g = img.data[idx+1], b = img.data[idx+2]
+        if (Math.abs(r - r0) <= tol && Math.abs(g - g0) <= tol && Math.abs(b - b0) <= tol) {
+          img.data[idx] = parseInt(toolColor.slice(1,3),16)
+          img.data[idx+1] = parseInt(toolColor.slice(3,5),16)
+          img.data[idx+2] = parseInt(toolColor.slice(5,7),16)
+          stack.push(x+1,y, x-1,y, x,y+1, x,y-1)
+        }
+      }
+      ctx2.putImageData(img, 0, 0)
+    }
+  }
+  const onToolMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!toolDrawing) return
+    const pos = getCanvasPos(e)
+    const ctx = getCtx()
+    if (!ctx) return
+    ctx.lineTo(pos.x, pos.y)
+    ctx.stroke()
+  }
+  const onToolMouseUp = () => {
+    setToolDrawing(false)
   }
 
   // 动态生成纹理的逻辑
@@ -177,12 +327,34 @@ function App() {
   const currentPattern = patterns.find(p => p.id === patternId) || patterns[0]
 
   return (
-    <div 
-      className={`app-container ${selectedBrushColor ? 'cursor-paint' : ''}`}
-      style={selectedBrushColor ? { cursor: 'crosshair' } : {}}
+    <div className="main-layout"
       onClick={() => setIsPatternMenuOpen(false)} // 点击其他地方关闭菜单
+      style={selectedBrushColor ? { cursor: 'crosshair' } : {}}
     >
-      {/* 左侧：资源库面板 */}
+      {/* 顶部导航栏 */}
+      <div className="top-bar">
+        {/* 第一行：图标 + 标题 + 版本 */}
+        <div className="title-row">
+          <div className="app-icon">
+            {/* 这里用一个简单的 CSS 图标或者 SVG 占位 */}
+            <div className="icon-placeholder">🌸</div>
+          </div>
+          <span className="app-name-cn">兰花指</span>
+          <span className="app-name-en">Orchid Gesture</span>
+          <span className="app-version">v1.0.0</span>
+        </div>
+        
+        {/* 第二行：菜单栏 */}
+        <div className="menu-row">
+          <div className="menu-item">文件 (File)</div>
+          <div className="menu-item">编辑 (Edit)</div>
+          <div className="menu-item">窗口 (Window)</div>
+          <div className="menu-item">帮助 (Help)</div>
+        </div>
+      </div>
+
+      <div className="app-container">
+        {/* 左侧：资源库面板 */}
       <div className="left-panel">
         <div className="panel-header">
           <div className="panel-title">资源库 (Assets)</div>
@@ -315,10 +487,11 @@ function App() {
 
       {/* 中间：3D 预览区 */}
       <div className="viewport-container">
-        {/* 品牌浮层 */}
+        {/* 品牌浮层 - 顶部导航已包含品牌信息，此处可简化或仅保留视口信息 */}
         <div className="viewport-overlay">
-          <h1 className="brand-title">Orchid Gesture</h1>
-          <div className="brand-subtitle">3D Fashion Design</div>
+          {/* <h1 className="brand-title">Orchid Gesture</h1>
+          <div className="brand-subtitle">兰花指 FASHION DESIGN</div> */}
+          <div className="brand-subtitle" style={{color: '#aaa'}}>User Perspective</div>
         </div>
 
         <Canvas camera={{ position: [0, 0, 40], fov: 45 }} gl={{ toneMappingExposure: 1.0 }}>
@@ -358,7 +531,6 @@ function App() {
       {/* 右侧：控制面板 */}
       <div className="control-panel">
         <div className="panel-header">
-          <div className="panel-title">调色板 (Palette)</div>
           {selectedBrushColor && (
              <button 
                className="btn-cancel-brush"
@@ -370,24 +542,93 @@ function App() {
         </div>
 
         <div className="panel-content">
-          <div className="color-grid-container">
-            {presetColors.map((c) => (
-              <div
-                key={c}
-                className={`color-cell ${selectedBrushColor === c ? 'active' : ''}`}
-                style={{ backgroundColor: c }}
-                onClick={() => setSelectedBrushColor(c)}
-                title={c}
-              />
-            ))}
+          <div className="panel-content-two-column">
+            {/* 左列：调色板 */}
+            <div className="palette-block">
+              <div className="color-grid-container">
+                {presetColors.map((c) => (
+                  <div
+                    key={c}
+                    className={`color-cell ${selectedBrushColor === c ? 'active' : ''}`}
+                    style={{ backgroundColor: c }}
+                    onClick={() => setSelectedBrushColor(c)}
+                    title={c}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* 右列：工具 */}
+            <div className="tool-block">
+              <div className="tool-grid-container">
+                <div 
+                  className={`tool-cell ${selectedTool === 'brush' ? 'active' : ''}`}
+                  onClick={() => setSelectedTool('brush')}
+                  title="画笔"
+                >🖌️</div>
+                <div 
+                  className={`tool-cell ${selectedTool === 'circle' ? 'active' : ''}`}
+                  onClick={() => setSelectedTool('circle')}
+                  title="圆形"
+                >●</div>
+                <div 
+                  className={`tool-cell ${selectedTool === 'square' ? 'active' : ''}`}
+                  onClick={() => setSelectedTool('square')}
+                  title="方形"
+                >■</div>
+                <div 
+                  className={`tool-cell ${selectedTool === 'line' ? 'active' : ''}`}
+                  onClick={() => setSelectedTool('line')}
+                  title="直线"
+                >—</div>
+                <div 
+                  className={`tool-cell ${selectedTool === 'wand' ? 'active' : ''}`}
+                  onClick={() => setSelectedTool('wand')}
+                  title="魔棒"
+                >🪄</div>
+                <div 
+                  className={`tool-cell ${selectedTool === 'freeform' ? 'active' : ''}`}
+                  onClick={() => setSelectedTool('freeform')}
+                  title="任意图形"
+                >✏️</div>
+                {/* 填满剩余格子 (总共32个) */}
+                {Array.from({length: 26}).map((_, i) => (
+                  <div key={i} className="tool-cell empty"></div>
+                ))}
+              </div>
+            </div>
           </div>
           
-          <div className="instruction-text">
-            {selectedBrushColor 
-              ? `已吸附颜色: ${selectedBrushColor}，点击模型上色` 
-              : '点击颜色块吸附颜色'}
+          <div className="tool-controls-area" style={{marginTop: '20px'}}>
+             <div className="tool-canvas-wrapper">
+                <canvas 
+                  ref={toolCanvasRef}
+                  width={256}
+                  height={256}
+                  className="tool-canvas"
+                  onMouseDown={onToolMouseDown}
+                  onMouseMove={onToolMouseMove}
+                  onMouseUp={onToolMouseUp}
+                  onMouseLeave={onToolMouseUp}
+                />
+             </div>
+             <div style={{marginTop: '10px'}}>
+                <label style={{fontSize: '12px', display: 'block', marginBottom: '4px'}}>工具大小: {toolSize}</label>
+                <input 
+                  type="range" 
+                  min="1" 
+                  max="100" 
+                  value={toolSize} 
+                  onChange={(e) => setToolSize(Number(e.target.value))} 
+                />
+             </div>
+             <button className="btn-apply-tool" style={{marginTop: '10px'}} onClick={handleApplyToolTexture}>
+                应用到当前部位
+             </button>
           </div>
+
         </div>
+      </div>
       </div>
     </div>
   )

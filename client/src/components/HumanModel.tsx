@@ -67,10 +67,23 @@ export function HumanModel({ color, length, width, texture, showTexture, onModel
           applyEnvIntensity(mesh.material as any)
         }
         if (isSkinMesh(mesh.name)) {
+          // 强制合并顶点以消除由于顶点分裂导致的硬边（鳄鱼皮/网格纹）
+          try {
+             mesh.geometry.deleteAttribute('normal')
+             mesh.geometry = BufferGeometryUtils.mergeVertices(mesh.geometry)
+             mesh.geometry.computeVertexNormals()
+          } catch (e) {
+             console.warn('Geometry merge failed for:', mesh.name, e)
+             // 降级处理
+             mesh.geometry.computeVertexNormals()
+          }
+
           // 强制克隆材质，断开与其他部件的连接
           if (mesh.material) {
              const oldMat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
              const newSkinMat = oldMat.clone()
+             // 关键：关闭 flatShading
+             newSkinMat.flatShading = false 
              mesh.material = newSkinMat
           }
           
@@ -81,8 +94,10 @@ export function HumanModel({ color, length, width, texture, showTexture, onModel
             mat.depthTest = true
             mat.depthWrite = true
             mat.side = THREE.FrontSide
+            mat.flatShading = false // 再次确保关闭
             if (typeof mat.metalness === 'number') mat.metalness = 0
-            if (typeof mat.roughness === 'number') mat.roughness = Math.max(0.8, mat.roughness || 0.8)
+            // 皮肤通常粗糙度较高，但也需要一点光泽
+            if (typeof mat.roughness === 'number') mat.roughness = Math.max(0.5, mat.roughness || 0.5) 
             if (typeof mat.envMapIntensity === 'number') mat.envMapIntensity = 0.5
           }
           if (Array.isArray(mesh.material)) {
