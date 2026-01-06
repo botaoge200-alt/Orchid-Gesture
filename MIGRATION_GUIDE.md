@@ -1,49 +1,43 @@
 # 项目迁移指南 (Project Migration Guide)
 
-## 1. 准备工作 (在办公室电脑上)
-在开始之前，请确保办公室的电脑安装了以下软件：
+## 方法一：使用 GitHub (推荐 - 自动同步)
 
-1.  **Node.js** (运行环境)
-    *   下载地址: https://nodejs.org/
-    *   版本建议: v20 或更高 (您家里用的是 v24)
-    *   安装后验证: 打开命令行(CMD/PowerShell) 输入 `node -v` 也就是看看有没有版本号。
+### 1. 在当前电脑上 (上传)
+我已经为您初始化了本地仓库并提交了所有代码。您只需要：
 
-2.  **辅助工具 (如果需要调整模型)**
-    *   MakeHuman (用于生成人体)
-    *   Blender (用于格式转换)
-    *   *注：如果只是开发网页功能，这两个暂时不需要，只带代码就行。*
+1.  登录您的 GitHub: [https://github.com/botaoge200-alt](https://github.com/botaoge200-alt)
+2.  点击右上角 **+** 号 -> **New repository**。
+3.  仓库名输入 `Orchid-Gesture` (或者您喜欢的名字)。
+4.  **不要** 勾选 "Initialize with README" 或 .gitignore (本地已经有了)。
+5.  点击 **Create repository**。
+6.  复制页面上显示的 "…or push an existing repository from the command line" 下面的那两行命令，在终端里运行。
+    *   命令通常长这样：
+        ```bash
+        git remote add origin https://github.com/botaoge200-alt/Orchid-Gesture.git
+        git push -u origin master
+        ```
 
----
-
-## 2. 如何启动项目
-
-将项目文件夹复制到办公室电脑后，请按以下步骤操作：
-
-### 第一步：打开项目
-1.  找到 `Orchid Gesture` 文件夹。
-2.  进入 `client` 文件夹 (代码都在这里)。
-3.  在空白处 **右键 -> 在终端中打开** (或者 Open in Terminal)。
-
-### 第二步：安装依赖 (如果没复制 node_modules 文件夹)
-如果您复制过来的文件夹里没有 `node_modules` (通常为了文件体积小会删掉它再复制)，请执行：
-```bash
-npm install
-```
-*等待进度条走完...*
-
-### 第三步：启动预览
-输入以下命令启动网页：
-```bash
-npm run dev
-```
-
-### 第四步：查看
-按住 `Ctrl` 点击终端里显示的链接 (通常是 http://localhost:5173)，或者在浏览器手动输入这个地址。
+### 2. 在办公室电脑上 (下载)
+1.  安装 **Git** 和 **Node.js**。
+2.  打开终端，运行：
+    ```bash
+    git clone https://github.com/botaoge200-alt/Orchid-Gesture.git
+    cd Orchid-Gesture/client
+    npm install
+    npm run dev
+    ```
 
 ---
 
-## 3. 常见问题
+## 方法二：U盘/网盘复制 (备用)
 
-*   **报错 "npm is not recognized"**: 说明 Node.js 没安装好，请重新安装 Node.js。
-*   **报错 "vite is not recognized"**: 说明依赖没装好，请重新执行 `npm install`。
-*   **模型不显示**: 检查 `public/models/plmxs.glb` 文件是否在位。
+### 1. 打包
+1.  找到 `E:\Orchid Gesture` 文件夹。
+2.  **删除** `client/node_modules` 文件夹 (这个太大了，不用拷)。
+3.  将整个文件夹复制到 U 盘。
+
+### 2. 恢复
+1.  复制到新电脑。
+2.  进入 `client` 文件夹。
+3.  运行 `npm install`。
+4.  运行 `npm run dev`。
