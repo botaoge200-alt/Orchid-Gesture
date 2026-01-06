@@ -1,0 +1,20 @@
+# Dependency directories
+node_modules/
+client/node_modules/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Vite
+dist/
+client/dist/
+.vite/
+client/.vite/
+
+# Backups
+client_backup_*/
+temp_*/
+
+# OS
+.DS_Store
+Thumbs.db
