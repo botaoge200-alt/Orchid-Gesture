@@ -38,8 +38,16 @@ try {
       console.log(`${index}: ${mesh.name}`);
       if (mesh.primitives) {
           mesh.primitives.forEach((p, pi) => {
-              console.log(`  - Primitive ${pi}: material=${p.material}`);
+              console.log(`  - Primitive ${pi}: material=${p.material}, targets=${p.targets ? p.targets.length : 0}`);
+              if (p.targets) {
+                  // GLTF targets usually match 'extras' or 'weights' names if available in mesh
+                  // But pure JSON might not show names easily without looking at mesh.extras.targetNames
+                  // We'll just check existence.
+              }
           });
+      }
+      if (mesh.extras && mesh.extras.targetNames) {
+          console.log(`    Target Names: ${mesh.extras.targetNames.join(', ')}`);
       }
     });
   }

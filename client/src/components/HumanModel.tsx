@@ -1,50 +1,248 @@
-import React, { useEffect, useRef } from 'react'
-import { useGLTF, Center } from '@react-three/drei'
+import React, { useEffect, useRef, useState } from 'react'
+import { Center, useGLTF } from '@react-three/drei'
+import { useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js'
+import { MODEL_CONFIG } from '../config'
 
 interface HumanModelProps {
-  color: string
-  length: number // 暂时未用，将来映射到身高
-  width: number  // 暂时未用，将来映射到胖瘦
-  texture: THREE.Texture | null
-  showTexture: boolean
+  activeTab?: string
+  selectedPart?: string
+  wardrobe: Record<string, {
+    color: string
+    texture: THREE.Texture | null
+    textureId: string
+    roughness?: number
+    metalness?: number
+    scale?: number
+    textureRepeat?: [number, number]
+    textureOffset?: [number, number]
+  }>
+  sculptSettings?: {
+    radius: number
+    intensity: number
+    symmetry: boolean
+    wireframe?: boolean
+  }
   onModelClick?: () => void
+  onHover?: (name: string) => void
 }
 
-// 记录每个部件的材质状态
-interface PartState {
-  color: string
-  texture: THREE.Texture | null
-  showTexture: boolean
-}
-
-export function HumanModel({ color, length, width, texture, showTexture, onModelClick }: HumanModelProps) {
+export function HumanModel({ activeTab, selectedPart, wardrobe, sculptSettings, onModelClick, onHover }: HumanModelProps) {
   const group = useRef<THREE.Group>(null)
   const { scene } = useGLTF('/models/plmxs.glb')
+  const { camera, gl, controls } = useThree()
   
-  // 使用状态来存储每个部件的样式，初始为空
-  const [partStates, setPartStates] = React.useState<Record<string, PartState>>({})
-
-  // 克隆场景以避免因为多次加载导致的引用问题
   const clonedScene = React.useMemo(() => scene.clone(), [scene])
 
+  // 监听线框模式
+  useEffect(() => {
+    if (!clonedScene) return
+    clonedScene.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        const mesh = child as THREE.Mesh
+        const material = mesh.material as THREE.MeshStandardMaterial
+        if (material) {
+          material.wireframe = !!sculptSettings?.wireframe
+        }
+      }
+    })
+  }, [clonedScene, sculptSettings?.wireframe])
+
+  // --- 雕刻相关状态 ---
+  const [isSculpting, setIsSculpting] = useState(false)
+  
+  const activeMeshRef = useRef<THREE.Mesh | null>(null)
+  const affectedVerticesRef = useRef<{index: number, weight: number}[]>([])
+  const affectedMirrorVerticesRef = useRef<{index: number, weight: number}[]>([])
+  const lastPointRef = useRef(new THREE.Vector3())
+  const planeRef = useRef(new THREE.Plane())
+  const raycasterRef = useRef(new THREE.Raycaster())
+
+  const handlePointerDown = (e: any) => {
+    if (activeTab !== 'modeling' || !sculptSettings) return
+    e.stopPropagation()
+    
+    // 禁用控制器
+    if (controls) (controls as any).enabled = false
+
+    const mesh = e.object as THREE.Mesh
+    if (!mesh.isMesh) return
+
+    setIsSculpting(true)
+    activeMeshRef.current = mesh
+    lastPointRef.current.copy(e.point)
+
+    // 创建一个面向摄像机的平面，用于计算拖拽
+    const normal = new THREE.Vector3()
+    camera.getWorldDirection(normal)
+    planeRef.current.setFromNormalAndCoplanarPoint(normal, e.point)
+
+    // 查找受影响的顶点
+    const geometry = mesh.geometry
+    const posAttribute = geometry.attributes.position
+    const vertex = new THREE.Vector3()
+    const worldMatrix = mesh.matrixWorld
+    const inverseMatrix = mesh.matrixWorld.clone().invert()
+
+    // 将点击点转为局部坐标
+    const localPoint = e.point.clone().applyMatrix4(inverseMatrix)
+    
+    // 查找对称点 (假设模型关于X轴对称)
+    const mirrorLocalPoint = localPoint.clone()
+    mirrorLocalPoint.x = -mirrorLocalPoint.x
+
+    const vertices: {index: number, weight: number}[] = []
+    const mirrorVertices: {index: number, weight: number}[] = []
+    
+    // 半径转为局部空间 (考虑世界缩放)
+    const worldScale = new THREE.Vector3()
+    mesh.getWorldScale(worldScale)
+    const localRadius = sculptSettings.radius / worldScale.x 
+
+    for (let i = 0; i < posAttribute.count; i++) {
+      vertex.fromBufferAttribute(posAttribute, i)
+      
+      const dist = vertex.distanceTo(localPoint)
+      if (dist < localRadius) {
+        // 使用平滑衰减函数 (SmoothStep-like)
+        const t = dist / localRadius
+        const weight = Math.pow(1 - t, 2) // 二次衰减
+        vertices.push({ index: i, weight })
+      }
+
+      if (sculptSettings.symmetry) {
+        const mirrorDist = vertex.distanceTo(mirrorLocalPoint)
+        if (mirrorDist < localRadius) {
+           const t = mirrorDist / localRadius
+           const weight = Math.pow(1 - t, 2)
+           mirrorVertices.push({ index: i, weight })
+        }
+      }
+    }
+    
+    affectedVerticesRef.current = vertices
+    affectedMirrorVerticesRef.current = mirrorVertices
+  }
+
+  const handlePointerMove = (e: any) => {
+    if (!isSculpting || !activeMeshRef.current || !sculptSettings) return
+    e.stopPropagation()
+
+    // 计算当前鼠标在平面上的投影位置
+    const mouse = new THREE.Vector2(
+        (e.clientX / window.innerWidth) * 2 - 1,
+        -(e.clientY / window.innerHeight) * 2 + 1
+    )
+    raycasterRef.current.setFromCamera(mouse, camera)
+    const intersectPoint = new THREE.Vector3()
+    raycasterRef.current.ray.intersectPlane(planeRef.current, intersectPoint)
+
+    if (intersectPoint) {
+       const delta = intersectPoint.clone().sub(lastPointRef.current)
+       
+       // 将 delta 转为局部空间
+       const inverseMatrix = activeMeshRef.current.matrixWorld.clone().invert()
+       
+       // 正确的坐标转换方式：将世界坐标点转为局部坐标点，然后相减
+       const localCurrent = intersectPoint.clone().applyMatrix4(inverseMatrix)
+       const localLast = lastPointRef.current.clone().applyMatrix4(inverseMatrix)
+       const localDelta = localCurrent.sub(localLast)
+       
+       const geometry = activeMeshRef.current.geometry
+       const posAttribute = geometry.attributes.position
+       const intensity = sculptSettings.intensity
+
+       // 应用变形
+       affectedVerticesRef.current.forEach(v => {
+           const x = posAttribute.getX(v.index)
+           const y = posAttribute.getY(v.index)
+           const z = posAttribute.getZ(v.index)
+           
+           posAttribute.setXYZ(
+               v.index,
+               x + localDelta.x * v.weight * intensity,
+               y + localDelta.y * v.weight * intensity,
+               z + localDelta.z * v.weight * intensity
+           )
+       })
+
+       // 应用对称变形 (X轴反向)
+       if (sculptSettings.symmetry) {
+           const mirrorDelta = localDelta.clone()
+           mirrorDelta.x = -mirrorDelta.x // 镜像移动
+           
+           affectedMirrorVerticesRef.current.forEach(v => {
+               const x = posAttribute.getX(v.index)
+               const y = posAttribute.getY(v.index)
+               const z = posAttribute.getZ(v.index)
+               
+               posAttribute.setXYZ(
+                   v.index,
+                   x + mirrorDelta.x * v.weight * intensity,
+                   y + mirrorDelta.y * v.weight * intensity,
+                   z + mirrorDelta.z * v.weight * intensity
+               )
+           })
+       }
+
+       posAttribute.needsUpdate = true
+       // geometry.computeVertexNormals() // 实时计算法线太慢，可以在 Up 时计算
+       
+       lastPointRef.current.copy(intersectPoint)
+    }
+  }
+
+  const handlePointerUp = (e: any) => {
+    if (isSculpting) {
+       setIsSculpting(false)
+       if (controls) (controls as any).enabled = true
+       
+       // 拖拽结束后重新计算法线
+       if (activeMeshRef.current) {
+           activeMeshRef.current.geometry.computeVertexNormals()
+       }
+       activeMeshRef.current = null
+    }
+  }
+
+  // 全局监听 pointer up/move (防止鼠标移出模型)
+  useEffect(() => {
+      const onUp = (e: PointerEvent) => handlePointerUp(e)
+      const onMove = (e: PointerEvent) => {
+          if (isSculpting) {
+             // 我们需要手动构建一个类似 r3f event 的对象，或者简化处理
+             // 这里使用 R3F 的 useThree 获取的 raycaster 手动投射有点麻烦
+             // 简单的方案：在 mesh 上监听 onPointerMove。
+             // 但是如果鼠标移出 mesh，拖拽应该继续。
+             // 这是一个常见问题。通常在 window 上监听。
+             // 但是我们需要 raycast。
+             // 让我们依赖 mesh 的 onPointerMove 吧，只要 mesh 足够大或者捕捉指针。
+             // e.target.setPointerCapture 可以解决。
+          }
+      }
+      // window.addEventListener('pointerup', onUp)
+      // return () => window.removeEventListener('pointerup', onUp)
+  }, [isSculpting])
+
+
   // 辅助函数：判断是否为身体部件（不应被染色）
+
   const isBodyPart = (name: string) => {
     const n = name.toLowerCase()
     return n.includes('body') || 
            n.includes('base') || 
            n.includes('skin') || 
-           n.includes('high-poly') || // MakeHuman 身体网格常见名称
+           n.includes('high-poly') || 
            n.includes('eye') || 
            n.includes('teeth') || 
            n.includes('tongue') ||
            n.includes('lash') ||
            n.includes('brow') ||
-           n.includes('hair') ||    // 头发
-           n.includes('ponytail') || // 马尾
-           n.includes('plmxs') ||    // 模型核心部件（可能是眼睛或基础网格）
-           n.includes('gawen')       // 可能是头发或特定部件，先排除
+           n.includes('hair') ||    // 头发单独处理
+           n.includes('ponytail') ||
+           n.includes('plmxs') ||    
+           n.includes('gawen')       
   }
   const isSkinMesh = (name: string) => {
     const n = name.toLowerCase()
@@ -56,6 +254,12 @@ export function HumanModel({ color, length, width, texture, showTexture, onModel
     clonedScene.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) {
         const mesh = child as THREE.Mesh
+        
+        // 保存原始缩放比例 (仅一次)
+        if (!mesh.userData.originalScale) {
+          mesh.userData.originalScale = mesh.scale.clone()
+        }
+
         const applyEnvIntensity = (mat: any) => {
           if (mat && typeof mat.envMapIntensity === 'number') {
             mat.envMapIntensity = 0.35
@@ -67,26 +271,21 @@ export function HumanModel({ color, length, width, texture, showTexture, onModel
           applyEnvIntensity(mesh.material as any)
         }
         if (isSkinMesh(mesh.name)) {
-          // 强制合并顶点以消除由于顶点分裂导致的硬边（鳄鱼皮/网格纹）
+          // 皮肤处理逻辑保持不变
           try {
              mesh.geometry.deleteAttribute('normal')
              mesh.geometry = BufferGeometryUtils.mergeVertices(mesh.geometry)
              mesh.geometry.computeVertexNormals()
           } catch (e) {
              console.warn('Geometry merge failed for:', mesh.name, e)
-             // 降级处理
              mesh.geometry.computeVertexNormals()
           }
-
-          // 强制克隆材质，断开与其他部件的连接
           if (mesh.material) {
              const oldMat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
              const newSkinMat = oldMat.clone()
-             // 关键：关闭 flatShading
              newSkinMat.flatShading = false 
              mesh.material = newSkinMat
           }
-          
           const setOpaque = (mat: any) => {
             if (!mat) return
             mat.transparent = false
@@ -94,9 +293,8 @@ export function HumanModel({ color, length, width, texture, showTexture, onModel
             mat.depthTest = true
             mat.depthWrite = true
             mat.side = THREE.FrontSide
-            mat.flatShading = false // 再次确保关闭
+            mat.flatShading = false 
             if (typeof mat.metalness === 'number') mat.metalness = 0
-            // 皮肤通常粗糙度较高，但也需要一点光泽
             if (typeof mat.roughness === 'number') mat.roughness = Math.max(0.5, mat.roughness || 0.5) 
             if (typeof mat.envMapIntensity === 'number') mat.envMapIntensity = 0.5
           }
@@ -109,7 +307,6 @@ export function HumanModel({ color, length, width, texture, showTexture, onModel
         }
         if (isBodyPart(mesh.name)) return
 
-        // 尝试优化几何体以支持平滑着色
         if (!mesh.userData.isSmoothed) {
            if (!mesh.geometry.attributes.normal) {
               mesh.geometry.computeVertexNormals()
@@ -128,82 +325,123 @@ export function HumanModel({ color, length, width, texture, showTexture, onModel
     })
   }, [clonedScene])
 
-  // 2. 响应外部状态变化，更新模型材质
+  // 2. 响应 wardrobe 状态变化，更新模型材质
   useEffect(() => {
     clonedScene.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) {
         const mesh = child as THREE.Mesh
-        if (isBodyPart(mesh.name)) return
+        const meshName = mesh.name.toLowerCase()
 
-        // 获取当前部件的状态，如果没有单独设置过，就用默认的
-        // 注意：这里的逻辑改为“只有点击过的才变色”，初始保持原色（白色）
-        const state = partStates[mesh.name]
-        
-        // 如果该部件有独立状态，就应用它的状态
-        if (state) {
-            const newMaterial = new THREE.MeshStandardMaterial({
-              color: state.showTexture ? 'white' : state.color,
-              map: state.texture,
-              roughness: 0.5,
-              metalness: 0.1,
-              envMapIntensity: 0.35,
-              side: THREE.DoubleSide,
-              skinning: true,
-              flatShading: false
-            })
-            mesh.material = newMaterial
-        } else {
-             // 默认材质（可以给个初始白色或保持原样）
-             // 这里为了统一，给一个默认的白色材质
-             const defaultMaterial = new THREE.MeshStandardMaterial({
-                color: 'white', 
-                roughness: 0.5,
-                metalness: 0.1,
-                envMapIntensity: 0.35,
-                side: THREE.DoubleSide,
-                skinning: true,
-                flatShading: false
-             })
-             mesh.material = defaultMaterial
+        // 定义部位映射关系，根据实际 GLB 内部 Mesh 名称
+        const partMapping: Record<string, string[]> = {
+          'top': ['crudefemaletshirt', 'shirt', 'top'],
+          'bottom': ['elvs_zombiekiller_pant1', 'pant', 'trousers', 'jeans'],
+          'shoes': ['shoes01', 'shoe', 'boot'],
+          'hat': ['fedora_cocked', 'fedora', 'hat', 'cap'],
+          'dress': ['plmxs', 'body', 'skin'], // 身体作为全身/dress处理
+          'hair': ['ponytail01', 'hair', 'ponytail'],
+          'accessory': ['eyebrow', 'eyelash']
         }
-      }
-    })
-  }, [clonedScene, partStates]) // 依赖 partStates
+
+        // 查找当前 mesh 属于哪个部位
+        let matchedPartId: string | null = null
+        
+        for (const [partId, keywords] of Object.entries(partMapping)) {
+          if (keywords.some(k => meshName.includes(k))) {
+            matchedPartId = partId
+            break
+          }
+        }
+
+        // 如果找到了对应的部位配置
+        if (matchedPartId && wardrobe[matchedPartId]) {
+          const style = wardrobe[matchedPartId]
+          const showTexture = !!style.texture
+
+          // 应用形状缩放 (基于原始缩放比例)
+          if (style.scale !== undefined && mesh.userData.originalScale) {
+             mesh.scale.copy(mesh.userData.originalScale).multiplyScalar(style.scale)
+          }
+
+          // 应用纹理变换
+          if (showTexture && style.texture) {
+             style.texture.wrapS = style.texture.wrapT = THREE.RepeatWrapping
+             if (style.textureRepeat) {
+                 style.texture.repeat.set(style.textureRepeat[0], style.textureRepeat[1])
+             }
+             if (style.textureOffset) {
+                 style.texture.offset.set(style.textureOffset[0], style.textureOffset[1])
+             }
+             style.texture.needsUpdate = true
+          }
+
+          const newMaterial = new THREE.MeshStandardMaterial({
+               color: showTexture ? 'white' : style.color,
+               map: showTexture ? style.texture : null,
+               transparent: true, // 允许透明
+               alphaTest: 0.5,    // 允许镂空
+               roughness: style.roughness !== undefined ? style.roughness : 0.6,
+               metalness: style.metalness !== undefined ? style.metalness : 0.0,
+               envMapIntensity: 0.35,
+               side: THREE.DoubleSide,
+               skinning: true,
+               flatShading: false
+           })
+           
+           // 高亮选中部位 (仅在材质模式下)
+           if (activeTab === 'materials' && selectedPart === matchedPartId) {
+             newMaterial.emissive.setHex(0x333333)
+           } else {
+             newMaterial.emissive.setHex(0x000000)
+           }
+
+           mesh.material = newMaterial
+         }
+       }
+     })
+  }, [clonedScene, wardrobe, activeTab, selectedPart]) // 依赖整个 wardrobe 对象及选中状态
 
   return (
-    // 位置已锁定：[0, 0, 0] 绝对居中，绝不改变
     <group ref={group} dispose={null} position={[0, 0, 0]}>
-      <Center>
+      <Center position={MODEL_CONFIG.MODEL_OFFSET}>
         <primitive 
           object={clonedScene} 
-          // 缩放已锁定：[19, 19, 19] 完美大小，绝不改变
-          scale={[19, 19, 19]} 
+          scale={MODEL_CONFIG.MODEL_SCALE} 
           onClick={(e: any) => {
+            if (activeTab === 'modeling') return // 建模模式下不触发点击选择
             e.stopPropagation()
             const meshName = e.object.name
-            
-            console.log('Clicked mesh:', meshName, 'Is Body Part:', isBodyPart(meshName))
-
-            // 点击身体部件时不触发染色
-            if (!isBodyPart(meshName)) {
-                // 仅更新被点击部件的状态
-                setPartStates(prev => ({
-                    ...prev,
-                    [meshName]: {
-                        color: color,
-                        texture: texture,
-                        showTexture: showTexture
-                    }
-                }))
-                
-                onModelClick && onModelClick()
+            console.log('Clicked mesh:', meshName)
+            onModelClick && onModelClick()
+          }}
+          onPointerDown={(e: any) => {
+            if (activeTab === 'modeling') {
+              (e.target as HTMLElement).setPointerCapture(e.pointerId);
+              handlePointerDown(e);
             }
+          }}
+          onPointerMove={(e: any) => {
+             if (activeTab === 'modeling') handlePointerMove(e);
+          }}
+          onPointerUp={(e: any) => {
+             if (activeTab === 'modeling') {
+               (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+               handlePointerUp(e);
+             }
+          }}
+          onPointerOver={(e: any) => {
+            if (activeTab === 'modeling' && onHover) {
+              e.stopPropagation()
+              onHover(e.object.name || 'Unnamed Mesh')
+            }
+          }}
+          onPointerOut={(e: any) => {
+             if (activeTab === 'modeling' && onHover) {
+                onHover('')
+             }
           }}
         />
       </Center>
     </group>
   )
 }
-
-// 预加载模型，避免切换时卡顿
-useGLTF.preload('/models/plmxs.glb')

@@ -1,634 +1,569 @@
-import React, { useState, useMemo, useRef } from 'react'
-import { Canvas } from '@react-three/fiber'
-import { OrbitControls, Environment, ContactShadows } from '@react-three/drei'
+import React, { useState, useMemo, Suspense, useRef, useEffect } from 'react'
+import { Canvas, useThree } from '@react-three/fiber'
+import { OrbitControls, Environment, Html, useProgress } from '@react-three/drei'
 import * as THREE from 'three'
 import { HumanModel } from './components/HumanModel'
 import './App.css'
 
+import { MODEL_CONFIG } from './config'
+
+function Loader() {
+  const { progress } = useProgress()
+  return <Html center>{progress.toFixed(1)} % loaded</Html>
+}
+
+// 部件列表定义
+const wardrobeParts = [
+  { id: 'top', name: '上装 / 衬衫' },
+  { id: 'bottom', name: '下装 / 裤子' },
+  { id: 'dress', name: '连衣裙 / 全身' },
+  { id: 'shoes', name: '鞋履' },
+  { id: 'hat', name: '帽子 / 头饰' },
+  { id: 'scarf', name: '围巾 / 颈饰' },
+  { id: 'accessory', name: '配饰' }
+]
+
+const TABS = [
+  { id: 'file', label: '文件' },
+  { id: 'modeling', label: '建模' },
+  { id: 'geometries', label: '几何形状' },
+  { id: 'materials', label: '材质' },
+  { id: 'pose', label: '姿态/动画' },
+  { id: 'render', label: '渲染' },
+  { id: 'settings', label: '设置' },
+  { id: 'utilities', label: '工具' },
+  { id: 'help', label: '帮助' },
+  { id: 'community', label: '社区' }
+]
+
+const SUB_TABS: Record<string, { id: string, label: string }[]> = {
+  file: [
+    { id: 'open', label: '打开' },
+    { id: 'save', label: '保存' },
+    { id: 'export', label: '导出' }
+  ],
+  // 其他一级菜单的二级菜单可以在此预留
+  modeling: [],
+  geometries: [],
+  materials: [],
+  pose: [],
+  render: [],
+  settings: [],
+  utilities: [],
+  help: [],
+  community: []
+}
+
+
+
 function App() {
-  // 状态管理
-  const [color, setColor] = useState('#ff0000') // 主色
-  const [stripeColor, setStripeColor] = useState('#ffffff') // 条纹色/辅色
-  const [width, setWidth] = useState(0) // 裙摆宽度
-  const [length, setLength] = useState(0) // 裙长
-  const [patternId, setPatternId] = useState('none') // 当前选中的模块ID (默认纯色)
+  // --- 状态管理 ---
 
-  // 颜色画笔状态
-  const [selectedBrushColor, setSelectedBrushColor] = useState<string | null>(null)
-  
-  // 花型下拉菜单状态
-  const [isPatternMenuOpen, setIsPatternMenuOpen] = useState(false)
+  // 1. 界面导航状态
+  const [activeTab, setActiveTab] = useState<string>('file')
+  const [activeSubTab, setActiveSubTab] = useState<string>('open')
+  const [selectedPart, setSelectedPart] = useState('dress')
 
-  // 预设颜色 (32色)
-  const presetColors = useMemo(() => [
-    '#FF0000', '#FF4500', '#FF8C00', '#FFD700', 
-    '#FFFF00', '#ADFF2F', '#00FF00', '#32CD32',
-    '#00FA9A', '#00FFFF', '#00BFFF', '#1E90FF', 
-    '#0000FF', '#8A2BE2', '#FF00FF', '#C71585',
-    '#FF69B4', '#FFB6C1', '#F08080', '#FA8072',
-    '#FFA07A', '#F4A460', '#D2691E', '#8B4513',
-    '#A0522D', '#D2B48C', '#F5DEB3', '#FFF8DC',
-    '#FFFFFF', '#C0C0C0', '#808080', '#000000'
-  ], [])
+  // 文件路径模拟
+  const [currentPath, setCurrentPath] = useState('C:/Users/User/Documents/makehuman/v1py3/models')
 
-  // 监听 ESC 键取消颜色选择
-  React.useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setSelectedBrushColor(null)
+  // 2. 材质/衣柜状态
+  // 存储每个部位的材质信息
+  const [wardrobe, setWardrobe] = useState<Record<string, {
+    color: string
+    texture: THREE.Texture | null
+    textureUrl: string | null
+    textureId: string
+    roughness: number
+    metalness: number
+    // 形状与纹理变换
+    scale: number
+    textureRepeat: [number, number]
+    textureOffset: [number, number]
+  }>>(() => {
+    // 初始化默认状态
+    const initial: any = {}
+    wardrobeParts.forEach(part => {
+      initial[part.id] = {
+        color: '#ffffff',
+        texture: null,
+        textureUrl: null,
+        textureId: 'none',
+        roughness: 0.6,
+        metalness: 0.0,
+        scale: 1.0,
+        textureRepeat: [1, 1],
+        textureOffset: [0, 0]
       }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
-
-  // 处理3D模型点击
-  const handleModelClick = () => {
-    if (selectedBrushColor) {
-      setColor(selectedBrushColor)
-      // 如果需要保留条纹模式但改变颜色，可以根据逻辑调整。这里假设点击直接变纯色，或者改变主色。
-      // 如果当前是纯色模式，直接变色。如果是有花型，可能只变底色。
-      // 用户说"涂上鼠标已经吸附的颜色"，这里简单处理为改变主色。
-    }
-  }
-
-  // 筛选器状态
-  const [category, setCategory] = useState('patterns') // 一级菜单：模块库
-  const [clothingType, setClothingType] = useState('dress') // 二级菜单：衣服类型
-  const [materialType, setMaterialType] = useState('cotton') // 三级菜单：面料选择
-  const [selectedTool, setSelectedTool] = useState<'brush'|'circle'|'square'|'line'|'wand'|'freeform'>('brush')
-  const toolCanvasRef = useRef<HTMLCanvasElement | null>(null)
-  const [toolDrawing, setToolDrawing] = useState(false)
-  const [toolLineStart, setToolLineStart] = useState<{x:number,y:number} | null>(null)
-  const [toolSize, setToolSize] = useState(40)
-
-  // 一级分类列表状态
-  const [categories, setCategories] = useState([
-    { id: 'patterns', name: '模块库 (Patterns)' },
-    { id: 'clothes', name: '服装库 (Clothes)' },
-    { id: 'scenes', name: '场景库 (Scenes)' }
-  ])
-
-  // 添加新分类
-  const handleAddCategory = () => {
-    const name = window.prompt('请输入新分类名称：')
-    if (name) {
-      const id = `cat-${Date.now()}`
-      setCategories(prev => [...prev, { id, name }])
-      setCategory(id) // 自动切换到新分类
-    }
-  }
-
-  // 模拟模块库数据 (现在改为状态，以便添加新模块)
-  type Pattern = { id: string, name: string, type: 'solid'|'svg'|'image', img: string|null }
-  const defaultPatterns: Pattern[] = [
-    { id: 'none', name: '纯色基础款', type: 'solid', img: null },
-    { id: 'stripes', name: '经典双色夹条', type: 'svg', img: null },
-    { id: 'plaid', name: '苏格兰格纹', type: 'svg', img: null },
-    { id: 'dots', name: '波点印花', type: 'svg', img: null },
-  ]
-  const [patternsByPart, setPatternsByPart] = useState<Record<string, Pattern[]>>({
-    dress: defaultPatterns,
-    top: defaultPatterns,
-    skirt: defaultPatterns
-  })
-  React.useEffect(() => {
-    try {
-      const saved = localStorage.getItem('patternsByPart')
-      if (saved) {
-        const parsed = JSON.parse(saved)
-        setPatternsByPart(prev => ({ ...prev, ...parsed }))
-      }
-    } catch {}
-  }, [])
-  React.useEffect(() => {
-    try {
-      localStorage.setItem('patternsByPart', JSON.stringify(patternsByPart))
-    } catch {}
-  }, [patternsByPart])
-  const patterns = useMemo(() => patternsByPart[clothingType] || defaultPatterns, [patternsByPart, clothingType])
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    try {
-      const formData = new FormData()
-      formData.append('file', file)
-      const res = await fetch('http://localhost:8000/generate-texture', {
-        method: 'POST',
-        body: formData
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json()
-      const newPattern: Pattern = {
-        id: `custom-${Date.now()}`,
-        name: file.name,
-        type: 'image',
-        img: data.texture_url as string
-      }
-      setPatternsByPart(prev => {
-        const list = prev[clothingType] || defaultPatterns
-        return { ...prev, [clothingType]: [...list, newPattern] }
-      })
-      setPatternId(newPattern.id)
-    } catch {
-      const reader = new FileReader()
-      reader.onload = (event) => {
-        const imgUrl = event.target?.result as string
-        const newPattern: Pattern = {
-          id: `custom-${Date.now()}`,
-          name: file.name,
-          type: 'image',
-          img: imgUrl
-        }
-        setPatternsByPart(prev => {
-          const list = prev[clothingType] || defaultPatterns
-          return { ...prev, [clothingType]: [...list, newPattern] }
-        })
-        setPatternId(newPattern.id)
-      }
-      reader.readAsDataURL(file)
-    }
-  }
-
-  const handleApplyToolTexture = () => {
-    const canvas = toolCanvasRef.current
-    if (!canvas) return
-    const imgUrl = canvas.toDataURL('image/png')
-    const newPattern: Pattern = {
-      id: `tool-${Date.now()}`,
-      name: `工具纹理`,
-      type: 'image',
-      img: imgUrl
-    }
-    setPatternsByPart(prev => {
-      const list = prev[clothingType] || defaultPatterns
-      return { ...prev, [clothingType]: [...list, newPattern] }
     })
-    setPatternId(newPattern.id)
-  }
+    return initial
+  })
 
-  const getCanvasPos = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const rect = (e.target as HTMLCanvasElement).getBoundingClientRect()
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top }
-  }
-  const getCtx = () => {
-    const canvas = toolCanvasRef.current
-    if (!canvas) return null
-    const ctx = canvas.getContext('2d')
-    return ctx
-  }
-  const toolColor = selectedBrushColor || stripeColor
-  const onToolMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const pos = getCanvasPos(e)
-    const ctx = getCtx()
-    if (!ctx) return
-    if (selectedTool === 'brush' || selectedTool === 'freeform') {
-      setToolDrawing(true)
-      ctx.strokeStyle = toolColor
-      ctx.lineWidth = 6
-      ctx.lineCap = 'round'
-      ctx.beginPath()
-      ctx.moveTo(pos.x, pos.y)
-    } else if (selectedTool === 'circle') {
-      ctx.fillStyle = toolColor
-      ctx.beginPath()
-      ctx.arc(pos.x, pos.y, toolSize, 0, Math.PI * 2)
-      ctx.fill()
-    } else if (selectedTool === 'square') {
-      ctx.fillStyle = toolColor
-      ctx.fillRect(pos.x - toolSize, pos.y - toolSize, toolSize * 2, toolSize * 2)
-    } else if (selectedTool === 'line') {
-      if (!toolLineStart) {
-        setToolLineStart(pos)
-      } else {
-        ctx.strokeStyle = toolColor
-        ctx.lineWidth = 6
-        ctx.beginPath()
-        ctx.moveTo(toolLineStart.x, toolLineStart.y)
-        ctx.lineTo(pos.x, pos.y)
-        ctx.stroke()
-        setToolLineStart(null)
-      }
-    } else if (selectedTool === 'wand') {
-      const canvas = toolCanvasRef.current
-      if (!canvas) return
-      const ctx2 = canvas.getContext('2d')
-      if (!ctx2) return
-      const img = ctx2.getImageData(0, 0, canvas.width, canvas.height)
-      const target = ((pos.y | 0) * canvas.width + (pos.x | 0)) * 4
-      const r0 = img.data[target], g0 = img.data[target+1], b0 = img.data[target+2]
-      const stack: number[] = [pos.x | 0, pos.y | 0]
-      const visited = new Set<string>()
-      const tol = 32
-      while (stack.length) {
-        const y = stack.pop() as number
-        const x = stack.pop() as number
-        const key = x + ',' + y
-        if (visited.has(key)) continue
-        visited.add(key)
-        if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) continue
-        const idx = (y * canvas.width + x) * 4
-        const r = img.data[idx], g = img.data[idx+1], b = img.data[idx+2]
-        if (Math.abs(r - r0) <= tol && Math.abs(g - g0) <= tol && Math.abs(b - b0) <= tol) {
-          img.data[idx] = parseInt(toolColor.slice(1,3),16)
-          img.data[idx+1] = parseInt(toolColor.slice(3,5),16)
-          img.data[idx+2] = parseInt(toolColor.slice(5,7),16)
-          stack.push(x+1,y, x-1,y, x,y+1, x,y-1)
-        }
-      }
-      ctx2.putImageData(img, 0, 0)
+  const [sculptSettings, setSculptSettings] = useState({
+    radius: 0.1,
+    intensity: 1.0, // Default to 1.0 (Direct follow)
+    symmetry: true,
+    wireframe: false
+  })
+  const [hoveredMeshName, setHoveredMeshName] = useState<string>('')
+
+  // 阻止右键菜单和事件冒泡，防止浏览器手势
+  const canvasContainerRef = useRef<HTMLDivElement>(null)
+  const controlsRef = useRef<any>(null)
+
+  const handleResetView = () => {
+    if (controlsRef.current) {
+      controlsRef.current.reset()
+      // 确保目标点回到模型中心
+      controlsRef.current.target.set(0, 10, 0)
+      controlsRef.current.update()
     }
   }
-  const onToolMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!toolDrawing) return
-    const pos = getCanvasPos(e)
-    const ctx = getCtx()
-    if (!ctx) return
-    ctx.lineTo(pos.x, pos.y)
-    ctx.stroke()
-  }
-  const onToolMouseUp = () => {
-    setToolDrawing(false)
+
+  useEffect(() => {
+    const container = canvasContainerRef.current
+    if (!container) return
+
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      return false
+    }
+
+    const handleMouse = (e: MouseEvent) => {
+      if (e.button === 2) { // Right click
+        e.stopPropagation() // Stop bubbling to window (where gestures listen)
+      }
+    }
+
+    container.addEventListener('contextmenu', handleContextMenu)
+    container.addEventListener('mousedown', handleMouse)
+    container.addEventListener('mouseup', handleMouse)
+
+    return () => {
+      container.removeEventListener('contextmenu', handleContextMenu)
+      container.removeEventListener('mousedown', handleMouse)
+      container.removeEventListener('mouseup', handleMouse)
+    }
+  }, [])
+
+  // --- 事件处理 ---
+
+  // 3. 模型点击处理
+  const updatePartStyle = (partId: string, updates: Partial<typeof wardrobe['dress']>) => {
+    setWardrobe(prev => ({
+      ...prev,
+      [partId]: { ...prev[partId], ...updates }
+    }))
   }
 
-  // 动态生成纹理的逻辑
-  const texture = useMemo(() => {
-    if (patternId === 'none') return null
+  // 处理纹理上传
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>, partId: string) => {
+    const file = event.target.files?.[0]
+    if (!file) return
 
-    const currentPattern = patterns.find(p => p.id === patternId)
+    const url = URL.createObjectURL(file)
+    const loader = new THREE.TextureLoader()
     
-    // 如果是图片类型的模块 (UGC)
-    if (currentPattern?.type === 'image' && currentPattern.img) {
-      const loader = new THREE.TextureLoader()
-      const tex = loader.load(currentPattern.img)
-      tex.wrapS = THREE.RepeatWrapping
-      tex.wrapT = THREE.RepeatWrapping
-      tex.colorSpace = THREE.SRGBColorSpace // 修正颜色空间
-      return tex
-    }
+    loader.load(url, (texture) => {
+      texture.colorSpace = THREE.SRGBColorSpace
+      texture.flipY = false // GLTF/FBX 通常不需要翻转Y
+      
+      updatePartStyle(partId, {
+        texture: texture,
+        textureUrl: url,
+        textureId: file.name
+      })
+    })
+  }
 
-    // 如果是程序化生成的模块 (SVG/Canvas)
-    const canvas = document.createElement('canvas')
-    canvas.width = 512
-    canvas.height = 512
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return null
-
-    // 背景色
-    ctx.fillStyle = color
-    ctx.fillRect(0, 0, 512, 512)
-
-    if (patternId === 'stripes') {
-      // 绘制条纹
-      ctx.fillStyle = stripeColor
-      const stripeWidth = 40
-      for (let i = 0; i < 512; i += stripeWidth * 2) {
-        ctx.fillRect(i, 0, stripeWidth, 512)
-      }
-    } else if (patternId === 'plaid') {
-      // 绘制格纹
-      ctx.strokeStyle = stripeColor
-      ctx.lineWidth = 20
-      // 竖线
-      for (let i = 20; i < 512; i += 80) {
-        ctx.beginPath()
-        ctx.moveTo(i, 0)
-        ctx.lineTo(i, 512)
-        ctx.stroke()
-      }
-      // 横线
-      for (let i = 20; i < 512; i += 80) {
-        ctx.beginPath()
-        ctx.moveTo(0, i)
-        ctx.lineTo(512, i)
-        ctx.stroke()
-      }
-    } else if (patternId === 'dots') {
-      // 绘制波点
-      ctx.fillStyle = stripeColor
-      for (let x = 25; x < 512; x += 60) {
-        for (let y = 25; y < 512; y += 60) {
-          ctx.beginPath()
-          ctx.arc(x, y, 15, 0, Math.PI * 2)
-          ctx.fill()
-        }
-      }
-    }
-
-    const tex = new THREE.CanvasTexture(canvas)
-    tex.wrapS = THREE.RepeatWrapping
-    tex.wrapT = THREE.RepeatWrapping
-    tex.needsUpdate = true
-    return tex
-  }, [color, stripeColor, patternId])
-
-  // 获取当前选中的花型对象
-  const currentPattern = patterns.find(p => p.id === patternId) || patterns[0]
+  // 模型点击处理
+  const handleModelClick = () => {
+    // 未来可以实现点击模型选中对应部位
+    // 目前 HumanModel 内部已经有简单的点击日志
+  }
 
   return (
-    <div className="main-layout"
-      onClick={() => setIsPatternMenuOpen(false)} // 点击其他地方关闭菜单
-      style={selectedBrushColor ? { cursor: 'crosshair' } : {}}
-    >
-      {/* 顶部导航栏 */}
+    <div className="main-layout">
+      {/* 顶部导航栏 - MakeHuman 风格 */}
       <div className="top-bar">
-        {/* 第一行：图标 + 标题 + 版本 */}
-        <div className="title-row">
-          <div className="app-icon">
-            {/* 这里用一个简单的 CSS 图标或者 SVG 占位 */}
-            <div className="icon-placeholder">🌸</div>
-          </div>
-          <span className="app-name-cn">兰花指</span>
-          <span className="app-name-en">Orchid Gesture</span>
-          <span className="app-version">v1.0.0</span>
-        </div>
-        
-        {/* 第二行：菜单栏 */}
-        <div className="menu-row">
-          <div className="menu-item">文件 (File)</div>
-          <div className="menu-item">编辑 (Edit)</div>
-          <div className="menu-item">窗口 (Window)</div>
-          <div className="menu-item">帮助 (Help)</div>
+        <div className="tabs">
+            {TABS.map(tab => (
+                <button 
+                    key={tab.id}
+                    className={`tab-button ${activeTab === tab.id ? 'active' : ''}`}
+                    onClick={() => {
+                        setActiveTab(tab.id as any)
+                        // 切换一级菜单时，默认选中第一个二级菜单（如果有）
+                        const subTabs = SUB_TABS[tab.id]
+                        if (subTabs && subTabs.length > 0) {
+                          setActiveSubTab(subTabs[0].id)
+                        }
+                    }}
+                >
+                    {tab.label}
+                </button>
+            ))}
         </div>
       </div>
+
+      {/* 顶部：二级菜单 (仅当有二级菜单时显示) */}
+      {SUB_TABS[activeTab] && SUB_TABS[activeTab].length > 0 && (
+        <div className="sub-top-bar">
+          {SUB_TABS[activeTab].map(subTab => (
+            <button
+              key={subTab.id}
+              className={`sub-tab-btn ${activeSubTab === subTab.id ? 'active' : ''}`}
+              onClick={() => setActiveSubTab(subTab.id)}
+            >
+              {subTab.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="app-container">
-        {/* 左侧：资源库面板 */}
-      <div className="left-panel">
-        <div className="panel-header">
-          <div className="panel-title">资源库 (Assets)</div>
-        </div>
-        
-        <div className="panel-content">
-          {/* 筛选器区域 */}
-          <div className="filter-section">
-            <div className="filter-group">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <label>一级分类</label>
-                <button 
-                  onClick={handleAddCategory}
-                  className="btn-add-category"
-                  title="添加新分类"
-                >
-                  +
-                </button>
+        {/* 左侧：资产库面板 (根据 Tab 变化) */}
+        <div className="left-panel">
+          {activeTab === 'materials' ? (
+             <ul className="part-list">
+               {wardrobeParts.map(part => (
+                 <li 
+                   key={part.id} 
+                   className={`part-item ${selectedPart === part.id ? 'active' : ''}`}
+                   onClick={() => setSelectedPart(part.id)}
+                 >
+                   {part.name}
+                 </li>
+               ))}
+             </ul>
+          ) : activeTab === 'file' && activeSubTab === 'open' ? (
+            // 文件 -> 打开：排序与筛选
+            <>
+              <div className="property-group">
+                <div className="group-title">排序</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', padding: '10px' }}>
+                  <label><input type="radio" name="sort" defaultChecked /> 按名称</label>
+                  <label><input type="radio" name="sort" /> 按创建时间</label>
+                  <label><input type="radio" name="sort" /> 按修改时间</label>
+                  <label><input type="radio" name="sort" /> 按大小</label>
+                </div>
               </div>
-              <select value={category} onChange={(e) => setCategory(e.target.value)}>
-                {categories.map(cat => (
-                  <option key={cat.id} value={cat.id}>{cat.name}</option>
-                ))}
-              </select>
+              <div className="property-group">
+                <div className="group-title">标签筛选</div>
+                <div style={{ padding: '10px', color: '#888' }}>
+                  (无标签)
+                </div>
+              </div>
+            </>
+          ) : (
+             <div style={{padding: '20px', color: '#888', fontStyle: 'italic', fontSize: '13px'}}>
+                {activeTab} 功能开发中...
+             </div>
+          )}
+        </div>
+
+        {/* 中间：3D 预览区 */}
+        <div 
+          className="canvas-container"
+          onContextMenu={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            return false
+          }}
+        >
+          {/* 文件路径条 (仅在文件模式显示) */}
+          {activeTab === 'file' && (
+            <div style={{ background: '#333', padding: '5px', display: 'flex', alignItems: 'center', gap: '5px', borderBottom: '1px solid #444' }}>
+              <span style={{ fontSize: '12px' }}>Selected Folder:</span>
+              <input type="text" value={currentPath} readOnly style={{ flex: 1, background: '#222', border: '1px solid #555', color: '#ddd', padding: '2px 5px' }} />
+              <button style={{ background: '#555', border: 'none', color: 'white', padding: '2px 8px', cursor: 'pointer' }}>...</button>
             </div>
+          )}
 
-            <div className="filter-group">
-              <label>衣服类型</label>
-              <select value={clothingType} onChange={(e) => setClothingType(e.target.value)}>
-                <option value="all">全部类型</option>
-                <option value="dress">连衣裙</option>
-                <option value="top">上衣</option>
-                <option value="skirt">半身裙</option>
-              </select>
-            </div>
+          <Canvas camera={{ position: MODEL_CONFIG.CAMERA_POSITION, fov: MODEL_CONFIG.FOV }} gl={{ toneMappingExposure: 1.0 }}>
+            <ambientLight intensity={0.7} />
+            <spotLight 
+              position={[30, 30, 30]} 
+              angle={0.15} 
+              penumbra={1} 
+              intensity={1.0} 
+              shadow-bias={-0.0001}
+            />
+            <pointLight position={[-15, -15, -15]} intensity={0.5} />
+            <Environment files="/textures/studio_small_09_1k.hdr" background={false} />
+            
+            <Suspense fallback={<Loader />}>
+              <HumanModel 
+                activeTab={activeTab}
+                selectedPart={selectedPart}
+                wardrobe={wardrobe}
+                sculptSettings={sculptSettings}
+                onModelClick={handleModelClick}
+                onHover={(name) => setHoveredMeshName(name)}
+              />
+            </Suspense>
+            <OrbitControls 
+              ref={controlsRef}
+              enablePan={true}
+              enableZoom={true}
+              mouseButtons={{
+                LEFT: undefined as any, // 禁用左键摄像机，保留给雕刻
+                MIDDLE: THREE.MOUSE.PAN, // 中键平移
+                RIGHT: THREE.MOUSE.ROTATE // 右键旋转
+              }}
+              minPolarAngle={Math.PI / 2 - (70 * Math.PI / 180)}
+              maxPolarAngle={Math.PI / 2 + (70 * Math.PI / 180)}
+              minDistance={10} 
+              maxDistance={100} 
+              enableDamping={true}
+              dampingFactor={0.05}
+              target={[0, 10, 0]} 
+            />
+          </Canvas>
+        </div>
 
-            <div className="filter-group">
-              <label>面料选择</label>
-              <select value={materialType} onChange={(e) => setMaterialType(e.target.value)}>
-                <option value="cotton">纯棉 (Cotton)</option>
-                <option value="silk">丝绸 (Silk)</option>
-                <option value="linen">亚麻 (Linen)</option>
-                <option value="denim">丹宁 (Denim)</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="divider"></div>
-
-          {/* 列表区域：根据一级分类显示内容 */}
-          {category === 'patterns' && (
-            <div className="control-section">
-              <div className="control-row">
-                <div className="control-label">
-                  <span>花型 (Pattern)</span>
-                  <label className="btn-upload-mini">
-                    上传
+        {/* 右侧：属性面板 - MakeHuman 风格 */}
+        <div className="right-panel">
+          {activeTab === 'modeling' ? (
+             <div className="property-group">
+                <div className="group-title">塑形工具 (Sculpt)</div>
+                <div className="control-row">
+                    <label>笔刷大小 (Radius): {sculptSettings.radius.toFixed(2)}</label>
                     <input 
-                      type="file" 
-                      accept="image/*" 
-                      hidden 
-                      onChange={handleFileUpload}
+                      type="range" 
+                      min="0.01" 
+                      max="0.5" 
+                      step="0.01"
+                      style={{width: '100%'}}
+                      value={sculptSettings.radius}
+                      onChange={(e) => setSculptSettings({...sculptSettings, radius: parseFloat(e.target.value)})}
                     />
-                  </label>
                 </div>
-                
-                {/* 自定义下拉菜单 */}
-                <div className="custom-select-container" onClick={(e) => e.stopPropagation()}>
-                  <div 
-                    className="custom-select-trigger"
-                    onClick={() => setIsPatternMenuOpen(!isPatternMenuOpen)}
-                  >
-                    <div className="selected-pattern-preview">
-                      {currentPattern.img ? (
-                        <div 
-                          className="pattern-icon" 
-                          style={{ backgroundImage: `url(${currentPattern.img})` }} 
-                        />
-                      ) : (
-                        <div 
-                          className="pattern-icon" 
-                          style={{ background: currentPattern.id === 'none' ? '#eee' : 'url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAIklEQVQIW2NkQAKrVq36zwjjgzj//v37zajjxluIkiEZAQB9BAgehM72OAAAAABJRU5ErkJggg==)' }} 
-                        />
-                      )}
-                      <span>{currentPattern.name}</span>
-                    </div>
-                    <div className="select-arrow">▼</div>
+                {/* 强度控制已移除，默认跟随鼠标 */}
+                <div className="control-row">
+                    <label>对称编辑 (Symmetry)</label>
+                    <input 
+                      type="checkbox" 
+                      checked={sculptSettings.symmetry}
+                      onChange={(e) => setSculptSettings({...sculptSettings, symmetry: e.target.checked})}
+                    />
+                </div>
+                <div className="control-row">
+                    <label>显示网格 (Wireframe)</label>
+                    <input 
+                      type="checkbox" 
+                      checked={sculptSettings.wireframe}
+                      onChange={(e) => setSculptSettings({...sculptSettings, wireframe: e.target.checked})}
+                    />
+                </div>
+                {hoveredMeshName && (
+                  <div className="control-row" style={{marginTop: '10px', padding: '5px', background: '#333', borderRadius: '4px'}}>
+                      <label style={{fontSize: '11px', color: '#aaa'}}>当前目标 (Target):</label>
+                      <div style={{fontSize: '12px', color: '#4f9'}}>{hoveredMeshName}</div>
                   </div>
-
-                  {isPatternMenuOpen && (
-                    <div className="custom-select-options">
-                      {patterns.map((p) => (
-                        <div 
-                          key={p.id}
-                          className={`custom-option ${patternId === p.id ? 'selected' : ''}`}
-                          onClick={() => {
-                            setPatternId(p.id)
-                            setIsPatternMenuOpen(false)
-                          }}
-                        >
-                          {p.img ? (
-                            <div 
-                              className="pattern-icon" 
-                              style={{ backgroundImage: `url(${p.img})` }} 
-                            />
-                          ) : (
-                            <div 
-                              className="pattern-icon" 
-                              style={{ background: p.id === 'none' ? '#eee' : 'url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAIklEQVQIW2NkQAKrVq36zwjjgzj//v37zajjxluIkiEZAQB9BAgehM72OAAAAABJRU5ErkJggg==)' }} 
-                            />
-                          )}
-                          <span>{p.name}</span>
-                        </div>
-                      ))}
+                )}
+                <div className="description-text" style={{marginTop: '10px', fontSize: '12px', color: '#888'}}>
+                    操作指南:
+                    <br/>- 左键按住模型拖拽可调整形状
+                    <br/>- 右键按住旋转视角
+                    <br/>- 对称模式下会自动调整另一侧
+                </div>
+             </div>
+          ) : activeTab === 'materials' ? (
+             <>
+             <div className="property-group">
+                <div className="group-title">当前选中部位 (Selected Part)</div>
+                <div className="control-row">
+                    <label>当前选择</label>
+                    <div style={{padding: '8px', background: 'rgba(0,0,0,0.2)', borderRadius: '4px'}}>
+                        {wardrobeParts.find(p => p.id === selectedPart)?.name}
                     </div>
-                  )}
+                </div>
+             </div>
+
+             <div className="property-group">
+                <div className="group-title">材质参数设置 (Material)</div>
+                
+                {/* 颜色选择 */}
+                <div className="control-row">
+                    <label>基础颜色 (Color)</label>
+                    <div className="color-picker-wrapper">
+                         <input 
+                           type="color" 
+                           value={wardrobe[selectedPart].color}
+                           onChange={(e) => updatePartStyle(selectedPart, { color: e.target.value })}
+                         />
+                         <span>{wardrobe[selectedPart].color}</span>
+                    </div>
+                </div>
+
+                {/* 纹理预览与操作 */}
+                <div className="control-row">
+                    <label>纹理贴图 (Texture)</label>
+                    <div className="texture-slot">
+                        {wardrobe[selectedPart].textureUrl ? (
+                            <img src={wardrobe[selectedPart].textureUrl || ''} className="texture-thumb" alt="Texture" />
+                        ) : (
+                            <div className="texture-empty">暂无纹理</div>
+                        )}
+                    </div>
+                    <div className="button-row">
+                         <label className="btn-mh-style">
+                            加载纹理...
+                            <input 
+                                type="file" 
+                                accept="image/*" 
+                                hidden 
+                                onChange={(e) => handleFileUpload(e, selectedPart)}
+                            />
+                         </label>
+                         {wardrobe[selectedPart].textureUrl && (
+                             <button 
+                                className="btn-mh-style"
+                                onClick={() => updatePartStyle(selectedPart, { texture: null, textureUrl: null, textureId: 'none' })}
+                             >
+                                移除纹理
+                             </button>
+                         )}
+                    </div>
+                </div>
+
+                {/* 质感控制 */}
+                <div className="control-row">
+                    <label>粗糙度 (Roughness): {wardrobe[selectedPart].roughness?.toFixed(2)}</label>
+                    <input 
+                      type="range" 
+                      min="0" 
+                      max="1" 
+                      step="0.01"
+                      style={{width: '100%'}}
+                      value={wardrobe[selectedPart].roughness || 0.6}
+                      onChange={(e) => updatePartStyle(selectedPart, { roughness: parseFloat(e.target.value) })}
+                    />
+                </div>
+                <div className="control-row">
+                    <label>金属度 (Metalness): {wardrobe[selectedPart].metalness?.toFixed(2)}</label>
+                    <input 
+                      type="range" 
+                      min="0" 
+                      max="1" 
+                      step="0.01"
+                      style={{width: '100%'}}
+                      value={wardrobe[selectedPart].metalness || 0.0}
+                      onChange={(e) => updatePartStyle(selectedPart, { metalness: parseFloat(e.target.value) })}
+                    />
+                </div>
+
+                {/* 形状调整 (仅缩放) */}
+                <div className="property-group" style={{marginTop: '10px', borderTop: '1px solid #444', paddingTop: '10px'}}>
+                    <div className="group-title">形状缩放 (Scale)</div>
+                    <div className="control-row">
+                        <label>整体缩放: {wardrobe[selectedPart].scale?.toFixed(2)}</label>
+                        <input 
+                          type="range" 
+                          min="0.8" 
+                          max="1.5" 
+                          step="0.01"
+                          style={{width: '100%'}}
+                          value={wardrobe[selectedPart].scale || 1.0}
+                          onChange={(e) => updatePartStyle(selectedPart, { scale: parseFloat(e.target.value) })}
+                        />
+                    </div>
+                </div>
+
+                {/* 纹理变换 */}
+                {wardrobe[selectedPart].textureUrl && (
+                <div className="property-group" style={{marginTop: '10px', borderTop: '1px solid #444', paddingTop: '10px'}}>
+                    <div className="group-title">纹理变换 (Transform)</div>
+                    <div className="control-row">
+                        <label>平铺 X (Repeat X): {wardrobe[selectedPart].textureRepeat?.[0].toFixed(1)}</label>
+                        <input 
+                          type="range" 
+                          min="0.1" 
+                          max="5" 
+                          step="0.1"
+                          style={{width: '100%'}}
+                          value={wardrobe[selectedPart].textureRepeat?.[0] || 1}
+                          onChange={(e) => {
+                              const current = wardrobe[selectedPart].textureRepeat || [1, 1]
+                              updatePartStyle(selectedPart, { textureRepeat: [parseFloat(e.target.value), current[1]] })
+                          }}
+                        />
+                    </div>
+                    <div className="control-row">
+                        <label>平铺 Y (Repeat Y): {wardrobe[selectedPart].textureRepeat?.[1].toFixed(1)}</label>
+                        <input 
+                          type="range" 
+                          min="0.1" 
+                          max="5" 
+                          step="0.1"
+                          style={{width: '100%'}}
+                          value={wardrobe[selectedPart].textureRepeat?.[1] || 1}
+                          onChange={(e) => {
+                              const current = wardrobe[selectedPart].textureRepeat || [1, 1]
+                              updatePartStyle(selectedPart, { textureRepeat: [current[0], parseFloat(e.target.value)] })
+                          }}
+                        />
+                    </div>
+                    <div className="control-row">
+                        <label>偏移 X (Offset X): {wardrobe[selectedPart].textureOffset?.[0].toFixed(2)}</label>
+                        <input 
+                          type="range" 
+                          min="-1" 
+                          max="1" 
+                          step="0.01"
+                          style={{width: '100%'}}
+                          value={wardrobe[selectedPart].textureOffset?.[0] || 0}
+                          onChange={(e) => {
+                              const current = wardrobe[selectedPart].textureOffset || [0, 0]
+                              updatePartStyle(selectedPart, { textureOffset: [parseFloat(e.target.value), current[1]] })
+                          }}
+                        />
+                    </div>
+                     <div className="control-row">
+                        <label>偏移 Y (Offset Y): {wardrobe[selectedPart].textureOffset?.[1].toFixed(2)}</label>
+                        <input 
+                          type="range" 
+                          min="-1" 
+                          max="1" 
+                          step="0.01"
+                          style={{width: '100%'}}
+                          value={wardrobe[selectedPart].textureOffset?.[1] || 0}
+                          onChange={(e) => {
+                              const current = wardrobe[selectedPart].textureOffset || [0, 0]
+                              updatePartStyle(selectedPart, { textureOffset: [current[0], parseFloat(e.target.value)] })
+                          }}
+                        />
+                    </div>
+                </div>
+                )}
+             </div>
+             </>
+          ) : activeTab === 'file' && activeSubTab === 'open' ? (
+            // 文件 -> 打开：文件选择器
+            <div className="property-group">
+              <div className="group-title">文件选择器</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(80px, 1fr))', gap: '10px', padding: '10px' }}>
+                {/* 模拟文件列表 */}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', background: '#444', padding: '5px', borderRadius: '4px' }}>
+                  <div style={{ width: '40px', height: '40px', background: '#666', marginBottom: '5px' }}></div>
+                  <div style={{ fontSize: '11px', textAlign: 'center', wordBreak: 'break-all' }}>plmxs</div>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
+                  <div style={{ width: '40px', height: '40px', background: '#333', marginBottom: '5px' }}></div>
+                  <div style={{ fontSize: '11px', textAlign: 'center' }}>Default</div>
                 </div>
               </div>
             </div>
-          )}
-
-          {category === 'clothes' && (
-            <div className="empty-state">
-              暂无服装模型<br/>
-              <span style={{fontSize: '12px', color: '#999'}}>请先连接 MakeHuman 导入</span>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* 中间：3D 预览区 */}
-      <div className="viewport-container">
-        {/* 品牌浮层 - 顶部导航已包含品牌信息，此处可简化或仅保留视口信息 */}
-        <div className="viewport-overlay">
-          {/* <h1 className="brand-title">Orchid Gesture</h1>
-          <div className="brand-subtitle">兰花指 FASHION DESIGN</div> */}
-          <div className="brand-subtitle" style={{color: '#aaa'}}>User Perspective</div>
-        </div>
-
-        <Canvas camera={{ position: [0, 0, 40], fov: 45 }} gl={{ toneMappingExposure: 1.0 }}>
-          <ambientLight intensity={0.7} />
-          <spotLight 
-            position={[30, 30, 30]} 
-            angle={0.15} 
-            penumbra={1} 
-            intensity={1.0} 
-            shadow-bias={-0.0001}
-          />
-          <pointLight position={[-15, -15, -15]} intensity={0.5} />
-          {/* 使用本地 HDR 环境光，提升渲染质感 */}
-          <Environment files="/textures/studio_small_09_1k.hdr" background={false} />
-          
-          <HumanModel 
-            color={color}
-            length={length}
-            width={width}
-            texture={texture}
-            showTexture={patternId !== 'none'}
-            onModelClick={handleModelClick}
-          />
-          <OrbitControls 
-            enablePan={false} 
-            minPolarAngle={Math.PI / 2 - (70 * Math.PI / 180)} /* 俯视最大 70 度 (从水平面向上) */
-            maxPolarAngle={Math.PI / 2 + (70 * Math.PI / 180)} /* 仰视最大 70 度 (从水平面向下) */
-            minDistance={10} 
-            maxDistance={100} 
-            enableDamping={true} /* 开启阻尼，让旋转更有质感 */
-            dampingFactor={0.05}
-            target={[0, 0, 0]} /* 视角中心调整到人体中部 */
-          />
-        </Canvas>
-      </div>
-
-      {/* 右侧：控制面板 */}
-      <div className="control-panel">
-        <div className="panel-header">
-          {selectedBrushColor && (
-             <button 
-               className="btn-cancel-brush"
-               onClick={() => setSelectedBrushColor(null)}
-             >
-               取消 (ESC)
-             </button>
-          )}
-        </div>
-
-        <div className="panel-content">
-          <div className="panel-content-two-column">
-            {/* 左列：调色板 */}
-            <div className="palette-block">
-              <div className="color-grid-container">
-                {presetColors.map((c) => (
-                  <div
-                    key={c}
-                    className={`color-cell ${selectedBrushColor === c ? 'active' : ''}`}
-                    style={{ backgroundColor: c }}
-                    onClick={() => setSelectedBrushColor(c)}
-                    title={c}
-                  />
-                ))}
-              </div>
-            </div>
-
-            {/* 右列：工具 */}
-            <div className="tool-block">
-              <div className="tool-grid-container">
-                <div 
-                  className={`tool-cell ${selectedTool === 'brush' ? 'active' : ''}`}
-                  onClick={() => setSelectedTool('brush')}
-                  title="画笔"
-                >🖌️</div>
-                <div 
-                  className={`tool-cell ${selectedTool === 'circle' ? 'active' : ''}`}
-                  onClick={() => setSelectedTool('circle')}
-                  title="圆形"
-                >●</div>
-                <div 
-                  className={`tool-cell ${selectedTool === 'square' ? 'active' : ''}`}
-                  onClick={() => setSelectedTool('square')}
-                  title="方形"
-                >■</div>
-                <div 
-                  className={`tool-cell ${selectedTool === 'line' ? 'active' : ''}`}
-                  onClick={() => setSelectedTool('line')}
-                  title="直线"
-                >—</div>
-                <div 
-                  className={`tool-cell ${selectedTool === 'wand' ? 'active' : ''}`}
-                  onClick={() => setSelectedTool('wand')}
-                  title="魔棒"
-                >🪄</div>
-                <div 
-                  className={`tool-cell ${selectedTool === 'freeform' ? 'active' : ''}`}
-                  onClick={() => setSelectedTool('freeform')}
-                  title="任意图形"
-                >✏️</div>
-                {/* 填满剩余格子 (总共32个) */}
-                {Array.from({length: 26}).map((_, i) => (
-                  <div key={i} className="tool-cell empty"></div>
-                ))}
-              </div>
-            </div>
-          </div>
-          
-          <div className="tool-controls-area" style={{marginTop: '20px'}}>
-             <div className="tool-canvas-wrapper">
-                <canvas 
-                  ref={toolCanvasRef}
-                  width={256}
-                  height={256}
-                  className="tool-canvas"
-                  onMouseDown={onToolMouseDown}
-                  onMouseMove={onToolMouseMove}
-                  onMouseUp={onToolMouseUp}
-                  onMouseLeave={onToolMouseUp}
-                />
+          ) : (
+             <div className="property-group">
+                <div className="group-title">属性</div>
+                <div style={{padding: '10px', color: '#888'}}>暂无属性</div>
              </div>
-             <div style={{marginTop: '10px'}}>
-                <label style={{fontSize: '12px', display: 'block', marginBottom: '4px'}}>工具大小: {toolSize}</label>
-                <input 
-                  type="range" 
-                  min="1" 
-                  max="100" 
-                  value={toolSize} 
-                  onChange={(e) => setToolSize(Number(e.target.value))} 
-                />
-             </div>
-             <button className="btn-apply-tool" style={{marginTop: '10px'}} onClick={handleApplyToolTexture}>
-                应用到当前部位
-             </button>
-          </div>
-
+          )}
         </div>
-      </div>
+
       </div>
     </div>
   )
