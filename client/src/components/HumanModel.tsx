@@ -465,8 +465,7 @@ export function HumanModel({ activeTab, selectedPart, selectedClothes, clothingP
   }, [clonedScene, selectedClothes])
 
   return (
-    <group ref={group} dispose={null} position={[0, 0, 0]}>
-      <Center position={centerPosition}>
+    <group ref={group} dispose={null} position={centerPosition}>
           <group scale={finalScale} rotation={[0, 0, 0]}>
               <primitive 
                 object={clonedScene} 
@@ -511,7 +510,6 @@ export function HumanModel({ activeTab, selectedPart, selectedClothes, clothingP
              />
            )}
             </group>
-       </Center>
     </group>
   )
 }
