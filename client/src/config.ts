@@ -7,5 +7,5 @@ export const MODEL_CONFIG = {
 
 export const AVAILABLE_CLOTHES = [
   { id: 'none', name: '无', file: null, category: 'clothes' },
-  { id: 'blue_shirt', name: 'Blue Outdoor Shirt', file: '/models/Blue_Outdoor_Shirt.glb', category: 'clothes' }
+  { id: 'blue_shirt', name: 'Blue Outdoor Shirt', file: '/models/Blue_Outdoor_Shirt_Resized.glb', category: 'clothes' }
 ]
