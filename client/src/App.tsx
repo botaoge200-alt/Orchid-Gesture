@@ -320,23 +320,42 @@ function App() {
       <div className="app-container">
         {/* 左侧：原右侧属性面板内容 */}
         <div className="left-panel">
-          {activeTab === 'geometries' && selectedClothes ? (
+          {activeTab === 'geometries' ? (
              <div className="property-group">
-                <div className="group-title">服装参数 (Parameters)</div>
-                {Object.keys(clothingParams).map(key => (
-                  <div className="control-row" key={key}>
-                    <label>{key}</label>
-                    <input 
-                      type="range" 
-                      min="0" 
-                      max="1" 
-                      step="0.01"
-                      style={{width: '100%'}}
-                      value={clothingParams[key]}
-                      onChange={(e) => setClothingParams({...clothingParams, [key]: parseFloat(e.target.value)})}
-                    />
-                  </div>
-                ))}
+                <div className="group-title">服装选择 (Selection)</div>
+                <div className="control-row" style={{flexDirection: 'column', alignItems: 'stretch'}}>
+                  {AVAILABLE_CLOTHES.map(cloth => (
+                    <label key={cloth.id} style={{display: 'flex', alignItems: 'center', padding: '5px', background: selectedClothes === (cloth.id === 'none' ? null : cloth.id) ? 'rgba(255,255,255,0.1)' : 'transparent', cursor: 'pointer'}}>
+                      <input 
+                        type="radio" 
+                        name="clothes"
+                        checked={selectedClothes === (cloth.id === 'none' ? null : cloth.id)} 
+                        onChange={() => setSelectedClothes(cloth.id === 'none' ? null : cloth.id)}
+                      />
+                      <span style={{marginLeft: '8px'}}>{cloth.name}</span>
+                    </label>
+                  ))}
+                </div>
+
+                {selectedClothes && (
+                  <>
+                    <div className="group-title" style={{marginTop: '20px'}}>服装参数 (Parameters)</div>
+                    {Object.keys(clothingParams).map(key => (
+                      <div className="control-row" key={key}>
+                        <label>{key}</label>
+                        <input 
+                          type="range" 
+                          min="0" 
+                          max="1" 
+                          step="0.01"
+                          style={{width: '100%'}}
+                          value={clothingParams[key]}
+                          onChange={(e) => setClothingParams({...clothingParams, [key]: parseFloat(e.target.value)})}
+                        />
+                      </div>
+                    ))}
+                  </>
+                )}
              </div>
           ) : activeTab === 'modeling' ? (
              <div className="property-group">
