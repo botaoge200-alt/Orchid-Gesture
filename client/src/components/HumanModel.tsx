@@ -59,7 +59,7 @@ function ClothingModel({ url, params, scale }: { url: string, params?: Record<st
 
 export function HumanModel({ activeTab, selectedPart, selectedClothes, clothingParams, wardrobe, sculptSettings, onModelClick, onHover, baseModelPath, modelScale }: HumanModelProps) {
   const group = useRef<THREE.Group>(null)
-  const { scene } = useGLTF(baseModelPath || '/models/woman.glb')
+  const { scene } = useGLTF(baseModelPath || '/models/mpfb_body.glb')
   const { camera, gl, controls } = useThree()
   
   const selectedClothingItem = React.useMemo(() => 
