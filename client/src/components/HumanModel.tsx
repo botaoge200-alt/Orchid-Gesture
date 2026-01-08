@@ -511,6 +511,7 @@ export function HumanModel({ activeTab, selectedPart, selectedClothes, clothingP
              />
            )}
             </group>
+      </Center>
     </group>
   )
 }
