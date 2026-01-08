@@ -1,13 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Center, useGLTF } from '@react-three/drei'
+import { Center, useGLTF, TransformControls, Html } from '@react-three/drei'
 import { useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import { MODEL_CONFIG } from '../config'
+import { MODEL_CONFIG, AVAILABLE_CLOTHES } from '../config'
 
 interface HumanModelProps {
   activeTab?: string
   selectedPart?: string
+  selectedClothes?: string | null
+  clothingParams?: Record<string, number>
   wardrobe: Record<string, {
     color: string
     texture: THREE.Texture | null
@@ -26,14 +28,55 @@ interface HumanModelProps {
   }
   onModelClick?: () => void
   onHover?: (name: string) => void
+  baseModelPath?: string
+  modelScale?: [number, number, number]
 }
 
-export function HumanModel({ activeTab, selectedPart, wardrobe, sculptSettings, onModelClick, onHover }: HumanModelProps) {
+function ClothingModel({ url, params, scale }: { url: string, params?: Record<string, number>, scale?: [number, number, number] }) {
+  const { scene } = useGLTF(url)
+  const clonedScene = React.useMemo(() => scene.clone(), [scene])
+
+  // Apply Morph Targets
+  React.useEffect(() => {
+    if (!params) return
+    clonedScene.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh && (child as THREE.Mesh).morphTargetInfluences) {
+        const mesh = child as THREE.Mesh
+        Object.keys(params).forEach(key => {
+          if (mesh.morphTargetDictionary && mesh.morphTargetDictionary.hasOwnProperty(key)) {
+            const index = mesh.morphTargetDictionary[key]
+            if (mesh.morphTargetInfluences) {
+               mesh.morphTargetInfluences[index] = params[key]
+            }
+          }
+        })
+      }
+    })
+  }, [clonedScene, params])
+
+  return <primitive object={clonedScene} scale={scale} />
+}
+
+export function HumanModel({ activeTab, selectedPart, selectedClothes, clothingParams, wardrobe, sculptSettings, onModelClick, onHover, baseModelPath, modelScale }: HumanModelProps) {
   const group = useRef<THREE.Group>(null)
-  const { scene } = useGLTF('/models/plmxs.glb')
+  const { scene } = useGLTF(baseModelPath || '/models/woman.glb')
   const { camera, gl, controls } = useThree()
   
+  const selectedClothingItem = React.useMemo(() => 
+    AVAILABLE_CLOTHES.find(c => c.id === selectedClothes), 
+    [selectedClothes]
+  )
+
   const clonedScene = React.useMemo(() => scene.clone(), [scene])
+  const finalScale = React.useMemo<[number, number, number]>(() => {
+    const base = MODEL_CONFIG.MODEL_SCALE
+    const extra = modelScale || [1, 1, 1]
+    return [base[0] * extra[0], base[1] * extra[1], base[2] * extra[2]]
+  }, [modelScale])
+
+  const centerPosition = React.useMemo<[number, number, number]>(() => {
+    return MODEL_CONFIG.MODEL_OFFSET
+  }, [baseModelPath, modelScale])
 
   // 监听线框模式
   useEffect(() => {
@@ -242,11 +285,15 @@ export function HumanModel({ activeTab, selectedPart, wardrobe, sculptSettings, 
            n.includes('hair') ||    // 头发单独处理
            n.includes('ponytail') ||
            n.includes('plmxs') ||    
-           n.includes('gawen')       
+           n.includes('gawen') ||
+           n.includes('f_ca01') ||
+           n.includes('mblab') ||
+           n.includes('woman') ||
+           n.includes('man')
   }
   const isSkinMesh = (name: string) => {
     const n = name.toLowerCase()
-    return n.includes('high-poly') || n.includes('body') || n.includes('skin') || n.includes('plmxs')
+    return n.includes('high-poly') || n.includes('body') || n.includes('skin') || n.includes('plmxs') || n.includes('f_ca01') || n.includes('mblab')
   }
 
   // 1. 初始化模型处理（仅执行一次：平滑法线、标记部件）
@@ -283,7 +330,7 @@ export function HumanModel({ activeTab, selectedPart, wardrobe, sculptSettings, 
           if (mesh.material) {
              const oldMat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
              const newSkinMat = oldMat.clone()
-             newSkinMat.flatShading = false 
+             ;(newSkinMat as any).flatShading = false 
              mesh.material = newSkinMat
           }
           const setOpaque = (mat: any) => {
@@ -295,7 +342,7 @@ export function HumanModel({ activeTab, selectedPart, wardrobe, sculptSettings, 
             mat.side = THREE.FrontSide
             mat.flatShading = false 
             if (typeof mat.metalness === 'number') mat.metalness = 0
-            if (typeof mat.roughness === 'number') mat.roughness = Math.max(0.5, mat.roughness || 0.5) 
+            if (typeof mat.roughness === 'number') mat.roughness = Math.max(0.45, mat.roughness || 0.45) 
             if (typeof mat.envMapIntensity === 'number') mat.envMapIntensity = 0.5
           }
           if (Array.isArray(mesh.material)) {
@@ -305,7 +352,7 @@ export function HumanModel({ activeTab, selectedPart, wardrobe, sculptSettings, 
           }
           return
         }
-        if (isBodyPart(mesh.name)) return
+        // if (isBodyPart(mesh.name)) return
 
         if (!mesh.userData.isSmoothed) {
            if (!mesh.geometry.attributes.normal) {
@@ -338,7 +385,7 @@ export function HumanModel({ activeTab, selectedPart, wardrobe, sculptSettings, 
           'bottom': ['elvs_zombiekiller_pant1', 'pant', 'trousers', 'jeans'],
           'shoes': ['shoes01', 'shoe', 'boot'],
           'hat': ['fedora_cocked', 'fedora', 'hat', 'cap'],
-          'dress': ['plmxs', 'body', 'skin'], // 身体作为全身/dress处理
+          'dress': ['plmxs', 'body', 'skin', 'f_ca01', 'mblab', 'woman', 'man'], // 身体作为全身/dress处理
           'hair': ['ponytail01', 'hair', 'ponytail'],
           'accessory': ['eyebrow', 'eyelash']
         }
@@ -384,7 +431,6 @@ export function HumanModel({ activeTab, selectedPart, wardrobe, sculptSettings, 
                metalness: style.metalness !== undefined ? style.metalness : 0.0,
                envMapIntensity: 0.35,
                side: THREE.DoubleSide,
-               skinning: true,
                flatShading: false
            })
            
@@ -401,47 +447,71 @@ export function HumanModel({ activeTab, selectedPart, wardrobe, sculptSettings, 
      })
   }, [clonedScene, wardrobe, activeTab, selectedPart]) // 依赖整个 wardrobe 对象及选中状态
 
+  // 3. Handle visibility of default clothes
+  useEffect(() => {
+    clonedScene.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        const name = child.name.toLowerCase()
+        
+        // Default clothes names found in inspection
+        const isDefaultTop = name.includes('crudefemaletshirt') || name.includes('shirt')
+        
+        if (isDefaultTop) {
+           // If we have selected a custom clothing item, hide the default top
+           child.visible = !selectedClothes
+        }
+      }
+    })
+  }, [clonedScene, selectedClothes])
+
   return (
     <group ref={group} dispose={null} position={[0, 0, 0]}>
-      <Center position={MODEL_CONFIG.MODEL_OFFSET}>
-        <primitive 
-          object={clonedScene} 
-          scale={MODEL_CONFIG.MODEL_SCALE} 
-          onClick={(e: any) => {
-            if (activeTab === 'modeling') return // 建模模式下不触发点击选择
-            e.stopPropagation()
-            const meshName = e.object.name
-            console.log('Clicked mesh:', meshName)
-            onModelClick && onModelClick()
-          }}
-          onPointerDown={(e: any) => {
-            if (activeTab === 'modeling') {
-              (e.target as HTMLElement).setPointerCapture(e.pointerId);
-              handlePointerDown(e);
-            }
-          }}
-          onPointerMove={(e: any) => {
-             if (activeTab === 'modeling') handlePointerMove(e);
-          }}
-          onPointerUp={(e: any) => {
-             if (activeTab === 'modeling') {
-               (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-               handlePointerUp(e);
-             }
-          }}
-          onPointerOver={(e: any) => {
-            if (activeTab === 'modeling' && onHover) {
-              e.stopPropagation()
-              onHover(e.object.name || 'Unnamed Mesh')
-            }
-          }}
-          onPointerOut={(e: any) => {
-             if (activeTab === 'modeling' && onHover) {
-                onHover('')
-             }
-          }}
-        />
-      </Center>
+      <Center position={centerPosition}>
+          <group scale={finalScale} rotation={[0, 0, 0]}>
+              <primitive 
+                object={clonedScene} 
+               onClick={(e: any) => {
+                 if (activeTab === 'modeling') return // 建模模式下不触发点击选择
+                 e.stopPropagation()
+                 const meshName = e.object.name
+                 console.log('Clicked mesh:', meshName)
+                 onModelClick && onModelClick()
+               }}
+               onPointerDown={(e: any) => {
+                 if (activeTab === 'modeling') {
+                   (e.target as HTMLElement).setPointerCapture(e.pointerId);
+                   handlePointerDown(e);
+                 }
+               }}
+               onPointerMove={(e: any) => {
+                  if (activeTab === 'modeling') handlePointerMove(e);
+               }}
+               onPointerUp={(e: any) => {
+                  if (activeTab === 'modeling') {
+                    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+                    handlePointerUp(e);
+                  }
+               }}
+               onPointerOver={(e: any) => {
+                 if (activeTab === 'modeling' && onHover) {
+                   e.stopPropagation()
+                   onHover(e.object.name || 'Unnamed Mesh')
+                 }
+               }}
+               onPointerOut={(e: any) => {
+                  if (activeTab === 'modeling' && onHover) {
+                     onHover('')
+                  }
+               }}
+             />
+             {selectedClothingItem && selectedClothingItem.file && (
+             <ClothingModel 
+               url={selectedClothingItem.file} 
+               params={clothingParams} 
+             />
+           )}
+            </group>
+       </Center>
     </group>
   )
 }

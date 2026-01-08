@@ -5,7 +5,7 @@ import * as THREE from 'three'
 import { HumanModel } from './components/HumanModel'
 import './App.css'
 
-import { MODEL_CONFIG } from './config'
+import { MODEL_CONFIG, AVAILABLE_CLOTHES } from './config'
 
 function Loader() {
   const { progress } = useProgress()
@@ -22,6 +22,8 @@ const wardrobeParts = [
   { id: 'scarf', name: '围巾 / 颈饰' },
   { id: 'accessory', name: '配饰' }
 ]
+
+
 
 const TABS = [
   { id: 'file', label: '文件' },
@@ -43,8 +45,26 @@ const SUB_TABS: Record<string, { id: string, label: string }[]> = {
     { id: 'export', label: '导出' }
   ],
   // 其他一级菜单的二级菜单可以在此预留
-  modeling: [],
-  geometries: [],
+  modeling: [
+    { id: 'sex', label: '性别' },
+    { id: 'height', label: '身高' },
+    { id: 'weight', label: '体重' },
+    { id: 'neck', label: '领围' },
+    { id: 'shoulder', label: '肩宽' },
+    { id: 'chest', label: '胸围' },
+    { id: 'waist', label: '腰围' },
+    { id: 'hips', label: '臀围' },
+    { id: 'thigh', label: '大腿围' },
+    { id: 'legOpening', label: '裤脚围' },
+    { id: 'sleeveLength', label: '袖长' },
+    { id: 'upperArm', label: '上臂围' },
+    { id: 'cuff', label: '袖口围' }
+  ],
+  geometries: [
+    { id: 'clothes', label: '衣服' },
+    { id: 'hair', label: '头发' },
+    { id: 'shoes', label: '鞋子' }
+  ],
   materials: [],
   pose: [],
   render: [],
@@ -59,10 +79,47 @@ const SUB_TABS: Record<string, { id: string, label: string }[]> = {
 function App() {
   // --- 状态管理 ---
 
+  const DEFAULT_MEASUREMENTS = React.useMemo(() => ({
+    male: {
+      heightCm: 175,
+      weightKg: 75,
+      neckCm: 39,
+      shoulderCm: 45,
+      chestCm: 98,
+      waistCm: 82,
+      hipsCm: 98,
+      thighCm: 56,
+      legOpeningCm: 40,
+      sleeveLengthCm: 62,
+      upperArmCm: 32,
+      cuffCm: 22
+    },
+    female: {
+      heightCm: 165,
+      weightKg: 60,
+      neckCm: 33,
+      shoulderCm: 38,
+      chestCm: 86,
+      waistCm: 66,
+      hipsCm: 92,
+      thighCm: 54,
+      legOpeningCm: 38,
+      sleeveLengthCm: 58,
+      upperArmCm: 26,
+      cuffCm: 18
+    }
+  }), [])
+
   // 1. 界面导航状态
   const [activeTab, setActiveTab] = useState<string>('file')
   const [activeSubTab, setActiveSubTab] = useState<string>('open')
   const [selectedPart, setSelectedPart] = useState('dress')
+  const [selectedClothes, setSelectedClothes] = useState<string | null>(null)
+  const [clothingParams, setClothingParams] = useState<Record<string, number>>({
+    'Sleeve_L_Longer': 0,
+    'Sleeve_R_Longer': 0,
+    'Collar_Bigger': 0
+  })
 
   // 文件路径模拟
   const [currentPath, setCurrentPath] = useState('C:/Users/User/Documents/makehuman/v1py3/models')
@@ -84,12 +141,16 @@ function App() {
     // 初始化默认状态
     const initial: any = {}
     wardrobeParts.forEach(part => {
+      let defaultColor = '#ffffff'
+      if (part.id === 'dress') defaultColor = '#EACFB6' // Female default
+      if (part.id === 'accessory') defaultColor = '#555555' // Medium gray eyebrows/Lashes
+
       initial[part.id] = {
-        color: '#ffffff',
+        color: defaultColor,
         texture: null,
         textureUrl: null,
         textureId: 'none',
-        roughness: 0.6,
+        roughness: part.id === 'dress' ? 0.45 : 0.6,
         metalness: 0.0,
         scale: 1.0,
         textureRepeat: [1, 1],
@@ -106,6 +167,40 @@ function App() {
     wireframe: false
   })
   const [hoveredMeshName, setHoveredMeshName] = useState<string>('')
+
+  const [gender, setGender] = useState<'male' | 'female'>('female')
+  const [measurements, setMeasurements] = useState(DEFAULT_MEASUREMENTS.female)
+
+  useEffect(() => {
+    setMeasurements(DEFAULT_MEASUREMENTS[gender])
+    
+    // Update skin color based on gender
+    // Asian Female: Natural (was male color) (#EACFB6)
+    // Asian Male: Slightly darker/tanned (#D6B59D)
+    const skinColor = gender === 'female' ? '#EACFB6' : '#D6B59D'
+    
+    setWardrobe(prev => ({
+      ...prev,
+      dress: {
+        ...prev.dress,
+        color: skinColor
+      },
+      accessory: {
+        ...prev.accessory,
+        color: '#555555' // Medium gray eyebrows/eyelashes
+      }
+    }))
+  }, [DEFAULT_MEASUREMENTS, gender])
+
+  const modelPath = gender === 'female' ? '/models/woman.glb' : '/models/man.glb'
+
+  const modelScale = useMemo<[number, number, number]>(() => {
+    const base = DEFAULT_MEASUREMENTS[gender]
+    const heightScale = Math.min(1.25, Math.max(0.85, measurements.heightCm / base.heightCm))
+    const weightRatio = measurements.weightKg / base.weightKg
+    const weightScale = Math.min(1.25, Math.max(0.85, Math.pow(Math.max(0.5, Math.min(1.8, weightRatio)), 1 / 3)))
+    return [weightScale, heightScale, weightScale]
+  }, [DEFAULT_MEASUREMENTS, gender, measurements.heightCm, measurements.weightKg])
 
   // 阻止右键菜单和事件冒泡，防止浏览器手势
   const canvasContainerRef = useRef<HTMLDivElement>(null)
@@ -223,152 +318,94 @@ function App() {
       )}
 
       <div className="app-container">
-        {/* 左侧：资产库面板 (根据 Tab 变化) */}
+        {/* 左侧：原右侧属性面板内容 */}
         <div className="left-panel">
-          {activeTab === 'materials' ? (
-             <ul className="part-list">
-               {wardrobeParts.map(part => (
-                 <li 
-                   key={part.id} 
-                   className={`part-item ${selectedPart === part.id ? 'active' : ''}`}
-                   onClick={() => setSelectedPart(part.id)}
-                 >
-                   {part.name}
-                 </li>
-               ))}
-             </ul>
-          ) : activeTab === 'file' && activeSubTab === 'open' ? (
-            // 文件 -> 打开：排序与筛选
-            <>
-              <div className="property-group">
-                <div className="group-title">排序</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', padding: '10px' }}>
-                  <label><input type="radio" name="sort" defaultChecked /> 按名称</label>
-                  <label><input type="radio" name="sort" /> 按创建时间</label>
-                  <label><input type="radio" name="sort" /> 按修改时间</label>
-                  <label><input type="radio" name="sort" /> 按大小</label>
-                </div>
-              </div>
-              <div className="property-group">
-                <div className="group-title">标签筛选</div>
-                <div style={{ padding: '10px', color: '#888' }}>
-                  (无标签)
-                </div>
-              </div>
-            </>
-          ) : (
-             <div style={{padding: '20px', color: '#888', fontStyle: 'italic', fontSize: '13px'}}>
-                {activeTab} 功能开发中...
-             </div>
-          )}
-        </div>
-
-        {/* 中间：3D 预览区 */}
-        <div 
-          className="canvas-container"
-          onContextMenu={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            return false
-          }}
-        >
-          {/* 文件路径条 (仅在文件模式显示) */}
-          {activeTab === 'file' && (
-            <div style={{ background: '#333', padding: '5px', display: 'flex', alignItems: 'center', gap: '5px', borderBottom: '1px solid #444' }}>
-              <span style={{ fontSize: '12px' }}>Selected Folder:</span>
-              <input type="text" value={currentPath} readOnly style={{ flex: 1, background: '#222', border: '1px solid #555', color: '#ddd', padding: '2px 5px' }} />
-              <button style={{ background: '#555', border: 'none', color: 'white', padding: '2px 8px', cursor: 'pointer' }}>...</button>
-            </div>
-          )}
-
-          <Canvas camera={{ position: MODEL_CONFIG.CAMERA_POSITION, fov: MODEL_CONFIG.FOV }} gl={{ toneMappingExposure: 1.0 }}>
-            <ambientLight intensity={0.7} />
-            <spotLight 
-              position={[30, 30, 30]} 
-              angle={0.15} 
-              penumbra={1} 
-              intensity={1.0} 
-              shadow-bias={-0.0001}
-            />
-            <pointLight position={[-15, -15, -15]} intensity={0.5} />
-            <Environment files="/textures/studio_small_09_1k.hdr" background={false} />
-            
-            <Suspense fallback={<Loader />}>
-              <HumanModel 
-                activeTab={activeTab}
-                selectedPart={selectedPart}
-                wardrobe={wardrobe}
-                sculptSettings={sculptSettings}
-                onModelClick={handleModelClick}
-                onHover={(name) => setHoveredMeshName(name)}
-              />
-            </Suspense>
-            <OrbitControls 
-              ref={controlsRef}
-              enablePan={true}
-              enableZoom={true}
-              mouseButtons={{
-                LEFT: undefined as any, // 禁用左键摄像机，保留给雕刻
-                MIDDLE: THREE.MOUSE.PAN, // 中键平移
-                RIGHT: THREE.MOUSE.ROTATE // 右键旋转
-              }}
-              minPolarAngle={Math.PI / 2 - (70 * Math.PI / 180)}
-              maxPolarAngle={Math.PI / 2 + (70 * Math.PI / 180)}
-              minDistance={10} 
-              maxDistance={100} 
-              enableDamping={true}
-              dampingFactor={0.05}
-              target={[0, 10, 0]} 
-            />
-          </Canvas>
-        </div>
-
-        {/* 右侧：属性面板 - MakeHuman 风格 */}
-        <div className="right-panel">
-          {activeTab === 'modeling' ? (
+          {activeTab === 'geometries' && selectedClothes ? (
              <div className="property-group">
-                <div className="group-title">塑形工具 (Sculpt)</div>
-                <div className="control-row">
-                    <label>笔刷大小 (Radius): {sculptSettings.radius.toFixed(2)}</label>
+                <div className="group-title">服装参数 (Parameters)</div>
+                {Object.keys(clothingParams).map(key => (
+                  <div className="control-row" key={key}>
+                    <label>{key}</label>
                     <input 
                       type="range" 
-                      min="0.01" 
-                      max="0.5" 
+                      min="0" 
+                      max="1" 
                       step="0.01"
                       style={{width: '100%'}}
-                      value={sculptSettings.radius}
-                      onChange={(e) => setSculptSettings({...sculptSettings, radius: parseFloat(e.target.value)})}
+                      value={clothingParams[key]}
+                      onChange={(e) => setClothingParams({...clothingParams, [key]: parseFloat(e.target.value)})}
                     />
-                </div>
-                {/* 强度控制已移除，默认跟随鼠标 */}
-                <div className="control-row">
-                    <label>对称编辑 (Symmetry)</label>
-                    <input 
-                      type="checkbox" 
-                      checked={sculptSettings.symmetry}
-                      onChange={(e) => setSculptSettings({...sculptSettings, symmetry: e.target.checked})}
-                    />
-                </div>
-                <div className="control-row">
-                    <label>显示网格 (Wireframe)</label>
-                    <input 
-                      type="checkbox" 
-                      checked={sculptSettings.wireframe}
-                      onChange={(e) => setSculptSettings({...sculptSettings, wireframe: e.target.checked})}
-                    />
-                </div>
-                {hoveredMeshName && (
-                  <div className="control-row" style={{marginTop: '10px', padding: '5px', background: '#333', borderRadius: '4px'}}>
-                      <label style={{fontSize: '11px', color: '#aaa'}}>当前目标 (Target):</label>
-                      <div style={{fontSize: '12px', color: '#4f9'}}>{hoveredMeshName}</div>
                   </div>
-                )}
-                <div className="description-text" style={{marginTop: '10px', fontSize: '12px', color: '#888'}}>
-                    操作指南:
-                    <br/>- 左键按住模型拖拽可调整形状
-                    <br/>- 右键按住旋转视角
-                    <br/>- 对称模式下会自动调整另一侧
+                ))}
+             </div>
+          ) : activeTab === 'modeling' ? (
+             <div className="property-group">
+                <div className="group-title">
+                  {SUB_TABS.modeling.find(s => s.id === activeSubTab)?.label || '建模参数'}
                 </div>
+
+                {activeSubTab === 'sex' ? (
+                  <div className="control-row" style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                    <label style={{ minWidth: '60px' }}>性别</label>
+                    <label style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      <input
+                        type="radio"
+                        name="gender"
+                        checked={gender === 'male'}
+                        onChange={() => setGender('male')}
+                      />
+                      男
+                    </label>
+                    <label style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      <input
+                        type="radio"
+                        name="gender"
+                        checked={gender === 'female'}
+                        onChange={() => setGender('female')}
+                      />
+                      女
+                    </label>
+                  </div>
+                ) : (
+                  (() => {
+                    const specs: Record<string, { key: keyof typeof measurements, label: string, min: number, max: number, step: number, unit: string }> = {
+                      height: { key: 'heightCm', label: '身高', min: 140, max: 200, step: 1, unit: 'cm' },
+                      weight: { key: 'weightKg', label: '体重', min: 40, max: 120, step: 1, unit: 'kg' },
+                      neck: { key: 'neckCm', label: '领围', min: 25, max: 55, step: 0.5, unit: 'cm' },
+                      shoulder: { key: 'shoulderCm', label: '肩宽', min: 30, max: 55, step: 0.5, unit: 'cm' },
+                      chest: { key: 'chestCm', label: '胸围', min: 70, max: 140, step: 0.5, unit: 'cm' },
+                      waist: { key: 'waistCm', label: '腰围', min: 50, max: 130, step: 0.5, unit: 'cm' },
+                      hips: { key: 'hipsCm', label: '臀围', min: 70, max: 140, step: 0.5, unit: 'cm' },
+                      thigh: { key: 'thighCm', label: '大腿围', min: 35, max: 90, step: 0.5, unit: 'cm' },
+                      legOpening: { key: 'legOpeningCm', label: '裤脚围', min: 25, max: 70, step: 0.5, unit: 'cm' },
+                      sleeveLength: { key: 'sleeveLengthCm', label: '袖长', min: 40, max: 80, step: 0.5, unit: 'cm' },
+                      upperArm: { key: 'upperArmCm', label: '上臂围', min: 18, max: 55, step: 0.5, unit: 'cm' },
+                      cuff: { key: 'cuffCm', label: '袖口围', min: 12, max: 40, step: 0.5, unit: 'cm' }
+                    }
+                    const spec = specs[activeSubTab]
+                    if (!spec) return null
+                    const v = measurements[spec.key] as number
+                    return (
+                      <div className="control-row">
+                        <label>
+                          {spec.label}: {v}{spec.unit}
+                        </label>
+                        <input
+                          type="range"
+                          min={spec.min}
+                          max={spec.max}
+                          step={spec.step}
+                          style={{ width: '100%' }}
+                          value={v}
+                          onChange={(e) => {
+                            const next = parseFloat(e.target.value)
+                            setMeasurements(prev => ({ ...prev, [spec.key]: next }))
+                          }}
+                        />
+                      </div>
+                    )
+                  })()
+                )}
              </div>
           ) : activeTab === 'materials' ? (
              <>
@@ -560,6 +597,121 @@ function App() {
              <div className="property-group">
                 <div className="group-title">属性</div>
                 <div style={{padding: '10px', color: '#888'}}>暂无属性</div>
+             </div>
+          )}
+        </div>
+
+        {/* 中间：3D 预览区 */}
+        <div 
+          className="canvas-container"
+          ref={canvasContainerRef}
+          onContextMenu={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            return false
+          }}
+        >
+          {/* 文件路径条 (仅在文件模式显示) */}
+          {activeTab === 'file' && (
+            <div style={{ background: '#333', padding: '5px', display: 'flex', alignItems: 'center', gap: '5px', borderBottom: '1px solid #444' }}>
+              <span style={{ fontSize: '12px' }}>Selected Folder:</span>
+              <input type="text" value={currentPath} readOnly style={{ flex: 1, background: '#222', border: '1px solid #555', color: '#ddd', padding: '2px 5px' }} />
+              <button style={{ background: '#555', border: 'none', color: 'white', padding: '2px 8px', cursor: 'pointer' }}>...</button>
+            </div>
+          )}
+
+          <Canvas shadows camera={{ position: MODEL_CONFIG.CAMERA_POSITION, fov: MODEL_CONFIG.FOV }} gl={{ preserveDrawingBuffer: true }}>
+            <color attach="background" args={['#333']} />
+            <ambientLight intensity={1.5} />
+            <directionalLight position={[0, 10, 10]} intensity={2} />
+            <directionalLight position={[0, 0, -10]} intensity={1} />
+            <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} intensity={2} castShadow />
+            
+            <Suspense fallback={<Loader />}>
+              <HumanModel 
+                activeTab={activeTab}
+                selectedPart={selectedPart}
+                selectedClothes={selectedClothes}
+                clothingParams={clothingParams}
+                wardrobe={wardrobe}
+                sculptSettings={sculptSettings}
+                onModelClick={handleModelClick}
+                onHover={setHoveredMeshName}
+                baseModelPath={modelPath}
+                modelScale={modelScale}
+              />
+            </Suspense>
+            <OrbitControls 
+              ref={controlsRef}
+              enablePan={true}
+              enableZoom={true}
+              mouseButtons={{
+                LEFT: undefined as any, // 禁用左键摄像机，保留给雕刻
+                MIDDLE: THREE.MOUSE.PAN, // 中键平移
+                RIGHT: THREE.MOUSE.ROTATE // 右键旋转
+              }}
+              minPolarAngle={Math.PI / 2 - (70 * Math.PI / 180)}
+              maxPolarAngle={Math.PI / 2 + (70 * Math.PI / 180)}
+              minDistance={10} 
+              maxDistance={100} 
+              enableDamping={true}
+              dampingFactor={0.05}
+              target={[0, 10, 0]} 
+            />
+          </Canvas>
+        </div>
+
+        {/* 右侧：原左侧资产库内容 */}
+        <div className="right-panel">
+          {activeTab === 'materials' ? (
+             <ul className="part-list">
+               {wardrobeParts.map(part => (
+                 <li 
+                   key={part.id} 
+                   className={`part-item ${selectedPart === part.id ? 'active' : ''}`}
+                   onClick={() => setSelectedPart(part.id)}
+                 >
+                   {part.name}
+                 </li>
+               ))}
+             </ul>
+          ) : activeTab === 'geometries' ? (
+            <ul className="part-list">
+              {AVAILABLE_CLOTHES.filter(c => c.category === activeSubTab).map(item => (
+                <li
+                  key={item.id}
+                  className={`part-item ${selectedClothes === item.id ? 'active' : ''}`}
+                  onClick={() => setSelectedClothes(item.id === 'none' ? null : item.id)}
+                >
+                  {item.name}
+                </li>
+              ))}
+              {AVAILABLE_CLOTHES.filter(c => c.category === activeSubTab).length === 0 && (
+                <div style={{padding: '10px', color: '#888'}}>暂无项目</div>
+              )}
+            </ul>
+          ) : activeTab === 'file' && activeSubTab === 'open' ? (
+            // 文件 -> 打开：排序与筛选
+            <>
+              <div className="property-group">
+                <div className="group-title">排序</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', padding: '10px' }}>
+                  <label><input type="radio" name="sort" defaultChecked /> 按名称</label>
+                  <label><input type="radio" name="sort" /> 按创建时间</label>
+                  <label><input type="radio" name="sort" /> 按修改时间</label>
+                  <label><input type="radio" name="sort" /> 按大小</label>
+                </div>
+              </div>
+              <div className="property-group">
+                <div className="group-title">标签筛选</div>
+                <div style={{ padding: '10px', color: '#888' }}>
+                  (无标签)
+                </div>
+              </div>
+            </>
+          ) : (
+             <div style={{padding: '20px', color: '#888', fontStyle: 'italic', fontSize: '13px'}}>
+                {activeTab} 功能开发中...
              </div>
           )}
         </div>
