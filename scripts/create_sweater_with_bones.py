@@ -203,32 +203,28 @@ def run():
     sleeve_r2 = create_aligned_cylinder(forearm_r_head, forearm_r_tail * 1.1, arm_radius * 0.85, "Sleeve_R2")
     parts.append(sleeve_r2)
     
-    # 5. Union All Parts
-    log("Unioning Parts...")
+    # 5. Join Parts (Fusion Strategy - Faster & More Stable than Boolean)
+    log("Joining Parts for Voxel Fusion...")
     bpy.ops.object.select_all(action='DESELECT')
     
-    # Active: Torso
-    bpy.context.view_layer.objects.active = torso
-    torso.select_set(True)
-    
+    # Select all parts
     for part in parts:
-        if part != torso:
-            mod_bool = torso.modifiers.new(name=f"Union_{part.name}", type='BOOLEAN')
-            mod_bool.object = part
-            mod_bool.operation = 'UNION'
-            mod_bool.solver = 'FLOAT' # Fast is more stable for simple primitives
-            bpy.ops.object.modifier_apply(modifier=mod_bool.name)
+        part.select_set(True)
+        
+    # Set active object
+    bpy.context.view_layer.objects.active = parts[0]
+    
+    # Join into one mesh (Intersections remain, but Remesh will fix them)
+    bpy.ops.object.join()
             
-            # Delete the part
-            bpy.data.objects.remove(part, do_unlink=True)
-            
-    sweater = torso
+    sweater = bpy.context.active_object
     sweater.name = "Sweater_Base"
     
     # 6. Refinement (Remesh & Smooth)
-    log("Refining Shape...")
+    log("Refining Shape (Voxel Fusion)...")
     
     # Voxel Remesh to fuse seams and make it organic
+    # This replaces Boolean Union! It calculates the outer volume.
     mod_remesh = sweater.modifiers.new(name="Remesh", type='REMESH')
     mod_remesh.mode = 'VOXEL'
     mod_remesh.voxel_size = 0.015 # 1.5cm resolution (coarse but smooth)
