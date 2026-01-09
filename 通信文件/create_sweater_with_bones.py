@@ -183,25 +183,51 @@ def run():
     parts.append(torso)
     
     # B. Sleeves (Long)
-    # Left Arm (Upper + Forearm combined for simplicity? Or separate segments?)
-    # Separate segments allow for bending.
-    arm_radius = torso_radius * 0.4 # Sleeves are thinner
+    # Left Arm
+    arm_radius = torso_radius * 0.35 # Sleeves slightly thinner
     
     log("Creating Left Sleeve...")
-    # Upper
     sleeve_l1 = create_aligned_cylinder(arm_l_head, arm_l_tail, arm_radius, "Sleeve_L1")
     parts.append(sleeve_l1)
-    # Lower (Forearm) - Extend slightly for wrist
-    sleeve_l2 = create_aligned_cylinder(forearm_l_head, forearm_l_tail * 1.1, arm_radius * 0.85, "Sleeve_L2") # Tapered
+    sleeve_l2 = create_aligned_cylinder(forearm_l_head, forearm_l_tail * 1.05, arm_radius * 0.85, "Sleeve_L2")
     parts.append(sleeve_l2)
     
+    # Left Cuff (Ring)
+    log("Creating Left Cuff...")
+    cuff_l = create_aligned_cylinder(forearm_l_tail * 1.05, forearm_l_tail * 1.12, arm_radius * 0.95, "Cuff_L")
+    parts.append(cuff_l)
+    
     log("Creating Right Sleeve...")
-    # Upper
     sleeve_r1 = create_aligned_cylinder(arm_r_head, arm_r_tail, arm_radius, "Sleeve_R1")
     parts.append(sleeve_r1)
-    # Lower
-    sleeve_r2 = create_aligned_cylinder(forearm_r_head, forearm_r_tail * 1.1, arm_radius * 0.85, "Sleeve_R2")
+    sleeve_r2 = create_aligned_cylinder(forearm_r_head, forearm_r_tail * 1.05, arm_radius * 0.85, "Sleeve_R2")
     parts.append(sleeve_r2)
+    
+    # Right Cuff (Ring)
+    log("Creating Right Cuff...")
+    cuff_r = create_aligned_cylinder(forearm_r_tail * 1.05, forearm_r_tail * 1.12, arm_radius * 0.95, "Cuff_R")
+    parts.append(cuff_r)
+
+    # C. Neck Collar (Torus-like Tube)
+    log("Creating Collar...")
+    # Calculate neck position and orientation
+    neck_vec = neck_tail - neck_head
+    neck_rot = mathutils.Vector((0,0,1)).rotation_difference(neck_vec.normalized()).to_euler()
+    
+    # Create a thick ring/cylinder for the collar
+    collar_height = 0.05 # 5cm tall collar
+    collar_radius = torso_radius * 0.50
+    
+    bpy.ops.mesh.primitive_cylinder_add(
+        radius=collar_radius + 0.02, # Slightly wider than the cut hole
+        depth=collar_height,
+        vertices=48,
+        location=neck_head,
+        rotation=neck_rot
+    )
+    collar = bpy.context.active_object
+    collar.name = "Collar_Base"
+    parts.append(collar)
     
     # 5. Join Parts (Fusion Strategy - Faster & More Stable than Boolean)
     log("Joining Parts for Voxel Fusion...")
@@ -241,7 +267,7 @@ def run():
     # 7. Cut Neck Hole
     # Create a cutter at the neck position
     log("Cutting Neck...")
-    neck_cutter_radius = torso_radius * 0.5
+    neck_cutter_radius = torso_radius * 0.45 # Smaller hole to leave thick collar rim
     neck_cutter = create_aligned_cylinder(
         neck_head - mathutils.Vector((0,0,0.1)), 
         neck_head + mathutils.Vector((0,0,0.3)), 
