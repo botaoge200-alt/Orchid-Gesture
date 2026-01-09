@@ -1,0 +1,27 @@
+【Blender 通信与脚本运行指南】
+
+给“傻子兄弟”看的简易说明：
+
+1. 准备工作：
+   - 在目标电脑上安装 Blender。
+   - 确保 Blender 中安装了能开启 socket 端口 9876 的插件 (例如 MCP 或自定义 server)。
+   - 打开 Blender，并启动服务 (Start Server)，监听端口 9876。
+   - 确保安装了 Python 环境。
+
+2. 文件说明：
+   - create_sweater_with_bones.py: 【最新推荐】生成圆领长袖套头衫（白胚）。根据骨骼自动生成，适合任何姿势，且已做好UV展开，适合贴图。
+   - remote_create_mpfb_scene.py: 旧版脚本。用于生成 MPFB 人体和简单的圆筒T恤。
+   - test_blender_connection.py: 用于测试是否能连上 Blender。
+
+3. 如何运行：
+   - 打开命令行 (CMD 或 PowerShell)。
+   - 进入本目录 (cd 到 "通信文件")。
+   - 运行命令: python create_sweater_with_bones.py
+   - 等待脚本运行完成（可能需要几分钟进行布尔运算和网格重构）。
+
+4. 常见问题：
+   - 如果提示 "ConnectionRefusedError"：说明 Blender 没开，或者插件没启动 server。
+   - 如果生成的衣服像“米其林轮胎人”：那是白胚的基础形状，后续可以用 sculpting 调整，或者调整脚本里的 voxel_size 参数。
+   - 如果报错 "Armature not found"：请确保 MPFB 插件能正常生成带骨骼的人体。
+
+祝好运！
